@@ -1,0 +1,32 @@
+[
+  {
+    "id": "1774011772051038000-failure_note",
+    "type": "failure_note",
+    "summary": "hello",
+    "details": "你好！我是 NeoCode，你的 AI 编程助手。\n\n有什么具体的编程问题需要我帮忙吗？比如：\n\n- 遇到了 Bug 需要调试\n- 想实现某个功能但不知道怎么写\n- 需要技术选型建议\n- 想优化现有代码结构\n\n请直接描述你的需求，我会提供实用、可操作的解决方案。",
+    "scope": "project",
+    "tags": [
+      "bugfix"
+    ],
+    "source": "conversation",
+    "confidence": 0.78,
+    "text": "failure_note\nhello\n你好！我是 NeoCode，你的 AI 编程助手。\n\n有什么具体的编程问题需要我帮忙吗？比如：\n\n- 遇到了 Bug 需要调试\n- 想实现某个功能但不知道怎么写\n- 需要技术选型建议\n- 想优化现有代码结构\n\n请直接描述你的需求，我会提供实用、可操作的解决方案。\nbugfix",
+    "created_at": "2026-03-20T13:02:52.051038Z",
+    "updated_at": "2026-03-20T13:02:55.8657197Z"
+  },
+  {
+    "id": "1774011772051038000-project_memory",
+    "type": "project_memory",
+    "summary": "hello",
+    "details": "你好！我是 NeoCode，你的 AI 编程助手。\n\n有什么具体的编程问题需要我帮忙吗？比如：\n\n- 遇到了 Bug 需要调试\n- 想实现某个功能但不知道怎么写\n- 需要技术选型建议\n- 想优化现有代码结构\n\n请直接描述你的需求，我会提供实用、可操作的解决方案。",
+    "scope": "project",
+    "tags": [
+      "bugfix"
+    ],
+    "source": "conversation",
+    "confidence": 0.84,
+    "text": "project_memory\nhello\n你好！我是 NeoCode，你的 AI 编程助手。\n\n有什么具体的编程问题需要我帮忙吗？比如：\n\n- 遇到了 Bug 需要调试\n- 想实现某个功能但不知道怎么写\n- 需要技术选型建议\n- 想优化现有代码结构\n\n请直接描述你的需求，我会提供实用、可操作的解决方案。\nbugfix",
+    "created_at": "2026-03-20T13:02:52.051038Z",
+    "updated_at": "2026-03-20T13:02:55.8657197Z"
+  }
+]
