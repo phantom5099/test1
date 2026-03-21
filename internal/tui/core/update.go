@@ -87,6 +87,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyF5:
 		return m.handleSubmit()
 
+	case tea.KeyF8:
+		return m.handleSubmit()
+
 	case tea.KeyUp:
 		if len(m.commandHistory) > 0 {
 			if m.cmdHistIndex < len(m.commandHistory)-1 {
