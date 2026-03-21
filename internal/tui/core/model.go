@@ -86,17 +86,22 @@ var (
 			Foreground(lipgloss.Color("#5C6370"))
 )
 
-func NewModel(client infra.ChatClient, persona string) Model {
+// NewModel 创建 TUI 状态模型。
+// historyTurns 用于限制发送给后端的短期对话轮数，避免原始消息无限增长。
+func NewModel(client infra.ChatClient, persona string, historyTurns int) Model {
 	stats, _ := client.GetMemoryStats(context.Background())
 	if stats == nil {
 		stats = &infra.MemoryStats{}
+	}
+	if historyTurns <= 0 {
+		historyTurns = 6
 	}
 
 	return Model{
 		mode:           ModeChat,
 		focused:        "input",
 		messages:       make([]Message, 0),
-		historyTurns:   6,
+		historyTurns:   historyTurns,
 		activeModel:    client.DefaultModel(),
 		memoryStats:    *stats,
 		commandHistory: make([]string, 0),
