@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 
@@ -162,6 +163,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return *m, nil
 
+	case tea.KeyTab:
+		if m.multilineMode {
+			m.insertAtCursor("\t")
+		} else {
+			m.inputBuffer += "\t"
+		}
+		return *m, nil
+
 	case tea.KeyRunes:
 		if m.lastKeyWasEnter {
 			m.lastKeyWasEnter = false
@@ -171,16 +180,32 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.handleSubmit()
 			}
 		}
+
+		// 检测是否是粘贴事件（bracked paste mode）
+		pasteField := reflect.ValueOf(msg).FieldByName("Paste")
+		isPaste := pasteField.IsValid() && pasteField.Bool()
+
 		r := string(msg.Runes)
-		if len(r) > 0 && r[0] >= 32 {
+
+		// 如果是粘贴，自动进入多行模式
+		if isPaste && !m.multilineMode && strings.Contains(r, "\n") {
+			m.enterMultilineMode()
+		}
+
+		if len(r) > 0 && (r[0] >= 32 || r[0] == 9) {
 			if m.multilineMode {
 				m.insertAtCursor(r)
 			} else {
 				m.inputBuffer += r
 				m.cursorCol++
 			}
-			m.cmdHistIndex = -1
+		} else if len(r) > 0 && r[0] < 32 && r[0] != 9 {
+			// 处理控制字符（如换行）
+			if r[0] == 10 || r[0] == 13 { // \n or \r
+				m.handleNewline()
+			}
 		}
+		m.cmdHistIndex = -1
 		return *m, nil
 
 	case tea.KeyBackspace:

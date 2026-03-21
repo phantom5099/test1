@@ -115,25 +115,52 @@ func renderContent(content string) string {
 	var b strings.Builder
 
 	inCodeBlock := false
+	codeLang := ""
+	var codeLines []string
+
 	for _, line := range lines {
 		if strings.HasPrefix(line, "```") {
 			if !inCodeBlock {
 				inCodeBlock = true
-				b.WriteString(codeBlockStyle.Render("\n" + line + "\n"))
+				codeLang = strings.TrimPrefix(line, "```")
+				codeLang = strings.TrimSpace(codeLang)
+				if codeLang == "" {
+					codeLang = "go"
+				}
+				codeLines = []string{}
+				b.WriteString("\n")
 			} else {
 				inCodeBlock = false
-				b.WriteString(codeBlockStyle.Render(line + "\n"))
+				highlighted := HighlightCodeBlock(codeLines, codeLang)
+				b.WriteString(highlighted)
+				b.WriteString(codeBlockStyle.Render("```\n"))
+				codeLines = nil
 			}
 			continue
 		}
 
 		if inCodeBlock {
-			b.WriteString(codeBlockStyle.Render(line))
-			b.WriteString("\n")
+			codeLines = append(codeLines, line)
 		} else {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
+	}
+
+	return b.String()
+}
+
+func HighlightCodeBlock(lines []string, lang string) string {
+	var b strings.Builder
+	code := strings.Join(lines, "\n")
+
+	b.WriteString(codeBlockStyle.Render("```" + lang + "\n"))
+
+	highlighted := HighlightCode(code, lang)
+	highlightedLines := strings.Split(highlighted, "\n")
+	for _, line := range highlightedLines {
+		b.WriteString(codeBlockStyle.Render(line))
+		b.WriteString("\n")
 	}
 
 	return b.String()
@@ -147,37 +174,56 @@ func RenderInput(buffer string, waitingCode bool, codeDelim string, codeLines []
 		b.WriteString("\n")
 
 		for i, line := range codeLines {
-			b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, line))
+			highlighted := HighlightCodeInline(line, detectLang(buffer))
+			b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, highlighted))
 		}
 
 		b.WriteString("  > " + lipgloss.NewStyle().Foreground(lipgloss.Color("#61AFEF")).Render(buffer))
 		b.WriteString("\n[F5发送 Ctrl+C取消]")
 	} else {
-		lines := strings.Split(buffer, "\n")
+		// 清理 \r 并将 tab 转换为 4 个空格以确保显示正确
+		cleanBuffer := strings.ReplaceAll(buffer, "\r", "")
+		cleanBuffer = strings.ReplaceAll(cleanBuffer, "\t", "    ")
+		lines := strings.Split(cleanBuffer, "\n")
 		hasMultipleLines := len(lines) > 1 || (len(lines) == 1 && lines[0] != "")
 
 		if hasMultipleLines || multilineMode {
+			lang := detectLang(buffer)
 			_ = "[多行输入]"
 			for i, line := range lines {
-				if multilineMode && i == cursorLine {
-					runes := []rune(line)
-					if cursorCol <= len(runes) {
-						var before, char, after string
-						if cursorCol < len(runes) {
-							before = string(runes[:cursorCol])
-							char = string(runes[cursorCol])
-							after = string(runes[cursorCol+1:])
-							b.WriteString(fmt.Sprintf("  %2d: %s%s%s%s\n", i+1, before, lipgloss.NewStyle().Background(lipgloss.Color("#3E4451")).Foreground(lipgloss.Color("#ABB2BF")).Render(char), after, " "))
-						} else {
-							before = string(runes)
-							b.WriteString(fmt.Sprintf("  %2d: %s%s\n", i+1, before, lipgloss.NewStyle().Background(lipgloss.Color("#3E4451")).Foreground(lipgloss.Color("#ABB2BF")).Render(" ")))
-						}
+				lineNum := fmt.Sprintf("  %2d: ", i+1)
+				b.WriteString(lineNum)
+
+				runes := []rune(line)
+				if multilineMode && i == cursorLine && cursorCol <= len(runes) {
+					cursorStyle := lipgloss.NewStyle().
+						Background(lipgloss.Color("#3E4451")).
+						Foreground(lipgloss.Color("#ABB2BF"))
+
+					var before, after string
+					var char string
+					if cursorCol < len(runes) {
+						char = string(runes[cursorCol])
+						before = string(runes[:cursorCol])
+						after = string(runes[cursorCol+1:])
 					} else {
-						b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, line))
+						before = string(runes)
+						char = " "
+					}
+
+					if before != "" {
+						b.WriteString(HighlightCodeInline(before, lang))
+					}
+					b.WriteString(cursorStyle.Render(char))
+					if after != "" {
+						b.WriteString(HighlightCodeInline(after, lang))
 					}
 				} else {
-					b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, line))
+					if line != "" {
+						b.WriteString(HighlightCodeInline(line, lang))
+					}
 				}
+				b.WriteString("\n")
 			}
 			if multilineMode {
 				b.WriteString("[方向键移动 Enter换行 F5/F8发送 Del删除]")
