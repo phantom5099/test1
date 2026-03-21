@@ -39,6 +39,7 @@ func main() {
 	}
 
 	persona := loadPersonaPrompt(config.GlobalAppConfig.Persona.FilePath)
+	historyTurns := config.GlobalAppConfig.History.ShortTermTurns
 
 	client, err := infra.NewLocalChatClient()
 	if err != nil {
@@ -46,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	model := core.NewModel(client, persona)
+	model := core.NewModel(client, persona, historyTurns)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "运行失败: %v\n", err)

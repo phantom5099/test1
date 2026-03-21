@@ -33,9 +33,10 @@ type MemoryStats struct {
 }
 
 type localChatClient struct {
-	roleSvc   domain.RoleService
-	memorySvc domain.MemoryService
-	config    *config.AppConfiguration
+	roleSvc    domain.RoleService
+	memorySvc  domain.MemoryService
+	workingSvc domain.WorkingMemoryService
+	config     *config.AppConfiguration
 }
 
 func NewLocalChatClient() (ChatClient, error) {
@@ -54,6 +55,7 @@ func NewLocalChatClient() (ChatClient, error) {
 	}
 	persistentRepo := repository.NewFileMemoryStore(storePath, maxItems)
 	sessionRepo := repository.NewSessionMemoryStore(maxItems)
+	workingRepo := repository.NewWorkingMemoryStore()
 	memorySvc := service.NewMemoryService(
 		persistentRepo,
 		sessionRepo,
@@ -63,11 +65,12 @@ func NewLocalChatClient() (ChatClient, error) {
 		storePath,
 		cfg.Memory.PersistTypes,
 	)
+	workingSvc := service.NewWorkingMemoryService(workingRepo, cfg.History.ShortTermTurns)
 
 	roleRepo := repository.NewFileRoleStore("./data/roles.json")
 	roleSvc := service.NewRoleService(roleRepo, strings.TrimSpace(cfg.Persona.FilePath))
 
-	return &localChatClient{roleSvc: roleSvc, memorySvc: memorySvc, config: cfg}, nil
+	return &localChatClient{roleSvc: roleSvc, memorySvc: memorySvc, workingSvc: workingSvc, config: cfg}, nil
 }
 
 func (c *localChatClient) Chat(ctx context.Context, messages []Message, model string) (<-chan string, error) {
@@ -75,7 +78,7 @@ func (c *localChatClient) Chat(ctx context.Context, messages []Message, model st
 	if err != nil {
 		return nil, err
 	}
-	chatSvc := service.NewChatService(c.memorySvc, c.roleSvc, chatProvider)
+	chatSvc := service.NewChatService(c.memorySvc, c.workingSvc, c.roleSvc, chatProvider)
 	return chatSvc.Send(ctx, &domain.ChatRequest{Messages: messages, Model: model})
 }
 
@@ -100,7 +103,13 @@ func (c *localChatClient) ClearMemory(ctx context.Context) error {
 }
 
 func (c *localChatClient) ClearSessionMemory(ctx context.Context) error {
-	return c.memorySvc.ClearSession(ctx)
+	if err := c.memorySvc.ClearSession(ctx); err != nil {
+		return err
+	}
+	if c.workingSvc != nil {
+		return c.workingSvc.Clear(ctx)
+	}
+	return nil
 }
 
 func (c *localChatClient) ListModels() []string {

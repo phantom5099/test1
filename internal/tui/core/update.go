@@ -35,11 +35,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StreamDoneMsg:
 		m.generating = false
 		m.FinishLastMessage()
+		m.TrimHistory(m.historyTurns)
 		return m, nil
 
 	case StreamErrorMsg:
 		m.generating = false
 		m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
+		m.TrimHistory(m.historyTurns)
 		return m, nil
 
 	case ShowHelpMsg:
@@ -276,6 +278,8 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 
 	m.AddMessage("user", input)
 	m.AddMessage("assistant", "")
+	// 在请求发出前先裁剪原始消息，避免 UI 历史无限扩张并影响短期上下文质量。
+	m.TrimHistory(m.historyTurns)
 	m.generating = true
 
 	m.commandHistory = append(m.commandHistory, input)
@@ -457,6 +461,7 @@ func (m *Model) submitCode() tea.Cmd {
 
 	m.AddMessage("user", fmt.Sprintf("```\n%s\n```", code))
 	m.AddMessage("assistant", "")
+	m.TrimHistory(m.historyTurns)
 	m.generating = true
 
 	return tea.Batch(
@@ -469,6 +474,7 @@ func (m *Model) sendCodeToAI(code string) tea.Cmd {
 	prompt := fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code)
 	m.AddMessage("user", prompt)
 	m.AddMessage("assistant", "")
+	m.TrimHistory(m.historyTurns)
 	m.generating = true
 
 	messages := m.buildMessages()
@@ -478,6 +484,7 @@ func (m *Model) sendCodeToAI(code string) tea.Cmd {
 func (m *Model) explainCode(code string) tea.Cmd {
 	m.AddMessage("user", fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code))
 	m.AddMessage("assistant", "")
+	m.TrimHistory(m.historyTurns)
 	m.generating = true
 
 	messages := m.buildMessages()
