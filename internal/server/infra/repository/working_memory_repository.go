@@ -14,10 +14,12 @@ type WorkingMemoryStore struct {
 	state *domain.WorkingMemoryState
 }
 
+// NewWorkingMemoryStore 创建一个进程内工作记忆存储。
 func NewWorkingMemoryStore() *WorkingMemoryStore {
 	return &WorkingMemoryStore{}
 }
 
+// Get 返回当前工作记忆快照的拷贝。
 func (s *WorkingMemoryStore) Get(ctx context.Context) (*domain.WorkingMemoryState, error) {
 	_ = ctx
 	s.mu.RLock()
@@ -28,6 +30,7 @@ func (s *WorkingMemoryStore) Get(ctx context.Context) (*domain.WorkingMemoryStat
 	return cloneWorkingMemoryState(s.state), nil
 }
 
+// Save 替换当前保存的工作记忆快照。
 func (s *WorkingMemoryStore) Save(ctx context.Context, state *domain.WorkingMemoryState) error {
 	_ = ctx
 	s.mu.Lock()
@@ -36,6 +39,7 @@ func (s *WorkingMemoryStore) Save(ctx context.Context, state *domain.WorkingMemo
 	return nil
 }
 
+// Clear 清空已保存的工作记忆快照。
 func (s *WorkingMemoryStore) Clear(ctx context.Context) error {
 	_ = ctx
 	s.mu.Lock()

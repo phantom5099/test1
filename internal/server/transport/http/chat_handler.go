@@ -11,6 +11,7 @@ type ChatHandler struct {
 	chatSvc domain.ChatGateway
 }
 
+// ServeHTTP 处理聊天请求并以换行分隔的流式响应返回结果。
 func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

@@ -57,6 +57,7 @@ type AppConfiguration struct {
 
 var GlobalAppConfig *AppConfiguration
 
+// DefaultAppConfig 返回内置的应用默认配置。
 func DefaultAppConfig() *AppConfiguration {
 	cfg := &AppConfiguration{}
 	cfg.App.Name = "NeoCode"
@@ -82,6 +83,7 @@ func DefaultAppConfig() *AppConfiguration {
 	return cfg
 }
 
+// LoadAppConfig 加载运行时配置并保存到全局变量。
 func LoadAppConfig(filePath string) error {
 	cfg, err := LoadBootstrapConfig(filePath)
 	if err != nil {
@@ -94,6 +96,7 @@ func LoadAppConfig(filePath string) error {
 	return nil
 }
 
+// LoadBootstrapConfig 加载不依赖运行时密钥的基础配置。
 func LoadBootstrapConfig(filePath string) (*AppConfiguration, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -111,6 +114,7 @@ func LoadBootstrapConfig(filePath string) (*AppConfiguration, error) {
 	return cfg, nil
 }
 
+// EnsureConfigFile 加载已有配置文件，或在缺失时写入默认配置。
 func EnsureConfigFile(filePath string) (*AppConfiguration, bool, error) {
 	if _, err := os.Stat(filePath); err == nil {
 		cfg, loadErr := LoadBootstrapConfig(filePath)
@@ -126,6 +130,7 @@ func EnsureConfigFile(filePath string) (*AppConfiguration, bool, error) {
 	return cfg, true, nil
 }
 
+// WriteAppConfig 将清空 API Key 后的配置写入磁盘。
 func WriteAppConfig(filePath string, cfg *AppConfiguration) error {
 	if cfg == nil {
 		return fmt.Errorf("app config is nil")
@@ -142,10 +147,12 @@ func WriteAppConfig(filePath string, cfg *AppConfiguration) error {
 	return nil
 }
 
+// Validate 检查配置是否满足运行时要求。
 func (c *AppConfiguration) Validate() error {
 	return c.ValidateRuntime()
 }
 
+// ValidateBase 检查不包含密钥的基础配置是否合法。
 func (c *AppConfiguration) ValidateBase() error {
 	if c == nil {
 		return fmt.Errorf("app config is nil")
@@ -191,6 +198,7 @@ func (c *AppConfiguration) ValidateBase() error {
 	return nil
 }
 
+// ValidateRuntime 检查配置字段和运行时必需的环境变量。
 func (c *AppConfiguration) ValidateRuntime() error {
 	if err := c.ValidateBase(); err != nil {
 		return err
@@ -201,10 +209,12 @@ func (c *AppConfiguration) ValidateRuntime() error {
 	return nil
 }
 
+// RuntimeAPIKey 返回环境变量中的 API Key，并去掉首尾空白。
 func RuntimeAPIKey() string {
 	return strings.TrimSpace(os.Getenv(APIKeyEnvVar))
 }
 
+// GetChatModelURL 从全局配置中查找聊天模型对应的 URL。
 func GetChatModelURL(modelName string) (string, bool) {
 	if GlobalAppConfig == nil {
 		return "", false
@@ -212,6 +222,7 @@ func GetChatModelURL(modelName string) (string, bool) {
 	return GetChatModelURLFromConfig(GlobalAppConfig, modelName)
 }
 
+// GetChatModelURLFromConfig 从指定配置中查找聊天模型对应的 URL。
 func GetChatModelURLFromConfig(cfg *AppConfiguration, modelName string) (string, bool) {
 	if cfg == nil {
 		return "", false
@@ -224,6 +235,7 @@ func GetChatModelURLFromConfig(cfg *AppConfiguration, modelName string) (string,
 	return "", false
 }
 
+// GetDefaultChatModel 返回全局配置中的默认聊天模型。
 func GetDefaultChatModel() string {
 	if GlobalAppConfig == nil {
 		return ""

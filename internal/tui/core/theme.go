@@ -288,14 +288,17 @@ var MonokaiTheme = SyntaxTheme{
 
 var CurrentTheme = OneDarkTheme
 
+// GetTheme 返回当前语法高亮主题。
 func GetTheme() *SyntaxTheme {
 	return &CurrentTheme
 }
 
+// SetTheme 替换当前语法高亮主题。
 func SetTheme(theme SyntaxTheme) {
 	CurrentTheme = theme
 }
 
+// RenderToken 使用主题中的对应样式渲染一个标记。
 func RenderToken(token Token, theme *SyntaxTheme) string {
 	switch token.Type {
 	case TokenComment:
@@ -323,6 +326,7 @@ func RenderToken(token Token, theme *SyntaxTheme) string {
 	}
 }
 
+// HighlightWithTheme 使用指定语法主题渲染代码。
 func HighlightWithTheme(code string, lang string, theme *SyntaxTheme) string {
 	tokens := Tokenize(code, lang)
 	var result strings.Builder
@@ -334,10 +338,12 @@ func HighlightWithTheme(code string, lang string, theme *SyntaxTheme) string {
 	return result.String()
 }
 
+// HighlightCode 使用当前激活的语法主题渲染代码。
 func HighlightCode(code string, lang string) string {
 	return HighlightWithTheme(code, lang, GetTheme())
 }
 
+// HighlightCodeInline 使用当前激活的语法主题渲染行内代码。
 func HighlightCodeInline(code string, lang string) string {
 	return HighlightCode(code, lang)
 }

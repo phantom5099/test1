@@ -26,6 +26,7 @@ type Match struct {
 	Score float64
 }
 
+// NewMemoryService 使用长期存储和会话存储创建记忆服务。
 func NewMemoryService(
 	persistentRepo domain.MemoryRepository,
 	sessionRepo domain.MemoryRepository,
@@ -46,6 +47,7 @@ func NewMemoryService(
 	}
 }
 
+// BuildContext 为当前输入返回得分最高的记忆片段。
 func (s *memoryServiceImpl) BuildContext(ctx context.Context, userInput string) (string, error) {
 	persistentItems, err := s.persistentRepo.List(ctx)
 	if err != nil {
@@ -86,6 +88,7 @@ func (s *memoryServiceImpl) BuildContext(ctx context.Context, userInput string) 
 	return builder.String(), nil
 }
 
+// Save 从一轮对话中提取记忆项并保存。
 func (s *memoryServiceImpl) Save(ctx context.Context, userInput, reply string) error {
 	items := deriveMemoryItems(userInput, reply)
 	for _, item := range items {
@@ -107,6 +110,7 @@ func (s *memoryServiceImpl) Save(ctx context.Context, userInput, reply string) e
 	return nil
 }
 
+// GetStats 返回记忆服务的数量统计和检索配置。
 func (s *memoryServiceImpl) GetStats(ctx context.Context) (*domain.MemoryStats, error) {
 	persistentItems, err := s.persistentRepo.List(ctx)
 	if err != nil {
@@ -128,14 +132,17 @@ func (s *memoryServiceImpl) GetStats(ctx context.Context) (*domain.MemoryStats, 
 	return stats, nil
 }
 
+// Clear 清空所有长期记忆项。
 func (s *memoryServiceImpl) Clear(ctx context.Context) error {
 	return s.persistentRepo.Clear(ctx)
 }
 
+// ClearSession 清空所有会话级记忆项。
 func (s *memoryServiceImpl) ClearSession(ctx context.Context) error {
 	return s.sessionRepo.Clear(ctx)
 }
 
+// Search 对记忆项打分并返回与查询最相关的结果。
 func Search(items []domain.MemoryItem, query string, topK int, minScore float64) []Match {
 	trimmedQuery := strings.TrimSpace(query)
 	if topK <= 0 || trimmedQuery == "" {
@@ -163,6 +170,7 @@ func Search(items []domain.MemoryItem, query string, topK int, minScore float64)
 	return matches
 }
 
+// MergeMatches 对多个匹配结果分组去重并重新排序。
 func MergeMatches(topK int, groups ...[]Match) []Match {
 	merged := make([]Match, 0)
 	seen := map[string]Match{}

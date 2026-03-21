@@ -15,6 +15,7 @@ type chatServiceImpl struct {
 	provider   domain.ChatProvider
 }
 
+// NewChatService 使用记忆、角色和模型提供方依赖创建聊天服务。
 func NewChatService(memorySvc domain.MemoryService, workingSvc domain.WorkingMemoryService, roleSvc domain.RoleService, provider domain.ChatProvider) domain.ChatGateway {
 	return &chatServiceImpl{
 		memorySvc:  memorySvc,
@@ -24,6 +25,7 @@ func NewChatService(memorySvc domain.MemoryService, workingSvc domain.WorkingMem
 	}
 }
 
+// Send 为消息补充角色和记忆上下文后发起流式回复。
 func (s *chatServiceImpl) Send(ctx context.Context, req *domain.ChatRequest) (<-chan string, error) {
 	messages := req.Messages
 

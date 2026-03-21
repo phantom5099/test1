@@ -29,6 +29,7 @@ var fallbackSupportedModels = []string{
 	"deepseek-ai/DeepSeek-R1-0528",
 }
 
+// SupportedModels 返回配置中的模型列表，缺省时使用内置兜底列表。
 func SupportedModels() []string {
 	if config.GlobalAppConfig != nil && len(config.GlobalAppConfig.Models.Chat.Models) > 0 {
 		models := make([]string, 0, len(config.GlobalAppConfig.Models.Chat.Models))
@@ -46,6 +47,7 @@ func SupportedModels() []string {
 	return models
 }
 
+// DefaultModel 返回配置中的默认模型，缺省时回退到首个可用模型。
 func DefaultModel() string {
 	defaultModel := config.GetDefaultChatModel()
 	if defaultModel != "" {
@@ -58,6 +60,7 @@ func DefaultModel() string {
 	return supported[0]
 }
 
+// IsSupportedModel 判断指定模型是否在支持列表中。
 func IsSupportedModel(model string) bool {
 	for _, m := range SupportedModels() {
 		if m == model {
@@ -73,6 +76,7 @@ type ModelScopeProvider struct {
 	Model   string
 }
 
+// GetModelName 返回提供方当前模型，缺省时使用默认模型。
 func (p *ModelScopeProvider) GetModelName() string {
 	if p.Model != "" {
 		return p.Model
@@ -88,6 +92,7 @@ type StreamResponse struct {
 	} `json:"choices"`
 }
 
+// Chat 向 ModelScope 发送流式请求并返回文本分片。
 func (p *ModelScopeProvider) Chat(ctx context.Context, messages []domain.Message) (<-chan string, error) {
 	out := make(chan string)
 

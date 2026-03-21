@@ -8,14 +8,17 @@ import (
 
 type WriteTool struct{}
 
+// Name 返回工具名称。
 func (w *WriteTool) Name() string {
 	return "write"
 }
 
+// Description 返回面向用户的工具说明。
 func (w *WriteTool) Description() string {
 	return "Write a file to the local filesystem.写入文件"
 }
 
+// Run 将给定内容写入目标文件路径。
 func (w *WriteTool) Run(params map[string]interface{}) *ToolResult {
 	// 主要逻辑
 	filePathParam, ok := params["filePath"]

@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// Update 处理 Bubble Tea 事件并驱动聊天状态更新。
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 

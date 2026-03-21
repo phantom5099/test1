@@ -95,24 +95,28 @@ type TickMsg struct{}
 
 func (TickMsg) isMsg() {}
 
+// Tick 返回一个会发出 TickMsg 的命令。
 func Tick() tea.Cmd {
 	return func() tea.Msg {
 		return TickMsg{}
 	}
 }
 
+// Chunk 返回一个会发出流式内容消息的命令。
 func Chunk(content string) tea.Cmd {
 	return func() tea.Msg {
 		return StreamChunkMsg{Content: content}
 	}
 }
 
+// Done 返回一个表示流结束的命令。
 func Done() tea.Cmd {
 	return func() tea.Msg {
 		return StreamDoneMsg{}
 	}
 }
 
+// CmdErr 返回一个会发出流错误消息的命令。
 func CmdErr(err error) tea.Cmd {
 	return func() tea.Msg {
 		return StreamErrorMsg{Err: err}

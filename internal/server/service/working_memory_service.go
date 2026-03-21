@@ -32,6 +32,7 @@ func NewWorkingMemoryService(repo domain.WorkingMemoryRepository, maxRecentTurns
 	}
 }
 
+// BuildContext 刷新工作记忆并格式化为提示上下文。
 func (s *workingMemoryServiceImpl) BuildContext(ctx context.Context, messages []domain.Message) (string, error) {
 	if err := s.Refresh(ctx, messages); err != nil {
 		return "", err
@@ -43,11 +44,13 @@ func (s *workingMemoryServiceImpl) BuildContext(ctx context.Context, messages []
 	return formatWorkingMemoryContext(state), nil
 }
 
+// Refresh 根据当前消息重建工作记忆快照。
 func (s *workingMemoryServiceImpl) Refresh(ctx context.Context, messages []domain.Message) error {
 	state := s.buildState(messages)
 	return s.repo.Save(ctx, state)
 }
 
+// Clear 清空当前工作记忆快照。
 func (s *workingMemoryServiceImpl) Clear(ctx context.Context) error {
 	return s.repo.Clear(ctx)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// View 渲染当前 TUI 界面。
 func (m Model) View() string {
 	var content string
 
@@ -68,6 +69,7 @@ func countLines(s string) int {
 	return count
 }
 
+// RenderMessages 渲染当前可见的聊天消息列表。
 func RenderMessages(messages []Message, width int) string {
 	if len(messages) == 0 {
 		return ""
@@ -151,6 +153,7 @@ func renderContent(content string) string {
 	return b.String()
 }
 
+// HighlightCodeBlock 渲染带语法高亮的代码块。
 func HighlightCodeBlock(lines []string, lang string) string {
 	var b strings.Builder
 	code := strings.Join(lines, "\n")
@@ -167,6 +170,7 @@ func HighlightCodeBlock(lines []string, lang string) string {
 	return b.String()
 }
 
+// RenderInput 渲染聊天和代码输入区域。
 func RenderInput(buffer string, waitingCode bool, codeDelim string, codeLines []string, width int, multilineMode bool, cursorLine int, cursorCol int) string {
 	var b strings.Builder
 
@@ -244,6 +248,7 @@ func RenderInput(buffer string, waitingCode bool, codeDelim string, codeLines []
 	return b.String()
 }
 
+// RenderStatusBar 渲染模型、记忆和状态指示信息。
 func RenderStatusBar(model string, memoryItems int, generating bool, width int) string {
 	var b strings.Builder
 
@@ -282,6 +287,7 @@ func RenderStatusBar(model string, memoryItems int, generating bool, width int) 
 	return b.String()
 }
 
+// RenderHelp 渲染内置命令帮助视图。
 func RenderHelp(width int) string {
 	var b strings.Builder
 

@@ -15,6 +15,7 @@ var (
 	ErrAPIKeyValidationSoft = errors.New("api key validation uncertain")
 )
 
+// NewChatProvider 为指定模型创建已配置的聊天提供方。
 func NewChatProvider(model string) (domain.ChatProvider, error) {
 	if config.GlobalAppConfig == nil {
 		return nil, fmt.Errorf("config.yaml is not loaded")
@@ -47,6 +48,7 @@ func NewChatProvider(model string) (domain.ChatProvider, error) {
 	}
 }
 
+// ValidateChatAPIKey 按当前提供方配置校验运行时 API Key。
 func ValidateChatAPIKey(ctx context.Context, cfg *config.AppConfiguration) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")

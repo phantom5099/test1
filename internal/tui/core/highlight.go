@@ -413,6 +413,7 @@ func getLanguage(lang string) *LanguageDefinition {
 	return Languages["go"]
 }
 
+// Tokenize 按指定语言将代码拆分为高亮所需的标记序列。
 func Tokenize(code string, lang string) []Token {
 	tokens := []Token{}
 	lines := strings.Split(code, "\n")
@@ -605,6 +606,7 @@ func buildKeywordPattern(keywords []string) *regexp.Regexp {
 	return regexp.MustCompile(pattern)
 }
 
+// DetectLanguage 根据代码内容猜测语言类型。
 func DetectLanguage(code string) string {
 	code = strings.TrimSpace(code)
 
