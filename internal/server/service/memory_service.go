@@ -387,10 +387,10 @@ func extractProjectRuleMemory(userInput, assistantReply string, now time.Time) (
 
 func extractCodeFactMemory(userInput, assistantReply string, now time.Time) (domain.MemoryItem, bool) {
 	combined := buildMemoryText(userInput, assistantReply)
-	if !containsAnyFold(combined, ".go", "config.yaml", "main.go", "services/", "memory/", "函数", "文件", "模块", "包") {
+	if !looksLikeCodeKnowledge(userInput, assistantReply) {
 		return domain.MemoryItem{}, false
 	}
-	if containsAnyFold(strings.ToLower(userInput), "帮我", "请你", "写一个", "实现一个") && !containsAnyFold(combined, "在 ", "位于", "负责", "调用", "使用", "路径", "文件") {
+	if containsAnyFold(strings.ToLower(userInput), "帮我", "请你", "写一个", "实现一个") && !containsAnyFold(combined, "在 ", "位于", "负责", "调用", "使用", "路径", "文件", "函数", "模块", "返回", "读取", "写入") {
 		return domain.MemoryItem{}, false
 	}
 	summary := domain.SummarizeText(firstNonEmptyLine(assistantReply, userInput), 140)
@@ -444,6 +444,30 @@ func isCodingRelevant(userInput, assistantReply string) bool {
 func looksLikeProjectFact(userInput, assistantReply string) bool {
 	combined := strings.ToLower(buildMemoryText(userInput, assistantReply))
 	return containsAnyFold(combined, "config.yaml", "readme", "go test", "go build", "项目", "仓库", "约定", "配置", "结构", "命令", "services/", "memory/", "main.go")
+}
+
+func looksLikeCodeKnowledge(userInput, assistantReply string) bool {
+	combined := buildMemoryText(userInput, assistantReply)
+	if !isCodingRelevant(userInput, assistantReply) {
+		return false
+	}
+
+	hasCodeAnchor := containsAnyFold(combined,
+		".go", "config.yaml", "main.go", "services/", "memory/", "json", "yaml",
+		"function", "func", "struct", "interface", "method", "package", "import",
+		"函数", "文件", "模块", "包", "结构体", "接口", "方法", "字段", "参数", "路径", "目录")
+	if !hasCodeAnchor {
+		return false
+	}
+
+	trimmedUser := strings.ToLower(strings.TrimSpace(userInput))
+	trimmedReply := strings.ToLower(strings.TrimSpace(assistantReply))
+	hasQuestionIntent := containsAnyFold(trimmedUser,
+		"什么", "干嘛", "作用", "怎么", "如何", "why", "where", "which", "负责", "在哪", "含义", "区别")
+	hasExplanation := containsAnyFold(trimmedReply,
+		"用于", "负责", "位于", "表示", "通过", "调用", "读取", "写入", "返回", "实现", "处理", "对应", "配置", "路径", "字段", "参数")
+
+	return hasQuestionIntent || hasExplanation || len(strings.TrimSpace(assistantReply)) >= 48
 }
 
 func looksLikeStableInstruction(text string) bool {
