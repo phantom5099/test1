@@ -43,6 +43,10 @@ type Model struct {
 	client          infra.ChatClient
 	persona         string
 	lastKeyWasEnter bool
+
+	cursorLine    int
+	cursorCol     int
+	multilineMode bool
 }
 
 type Message struct {

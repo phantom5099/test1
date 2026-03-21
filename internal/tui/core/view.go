@@ -46,7 +46,7 @@ func (m Model) View() string {
 	inputArea := lipgloss.NewStyle().
 		Height(inputHeight).
 		Width(m.width).
-		Render(RenderInput(m.inputBuffer, m.waitingCode, m.codeDelim, m.codeLines, m.width))
+		Render(RenderInput(m.inputBuffer, m.waitingCode, m.codeDelim, m.codeLines, m.width, m.multilineMode, m.cursorLine, m.cursorCol))
 
 	return statusBar + content + inputArea
 }
@@ -139,7 +139,7 @@ func renderContent(content string) string {
 	return b.String()
 }
 
-func RenderInput(buffer string, waitingCode bool, codeDelim string, codeLines []string, width int) string {
+func RenderInput(buffer string, waitingCode bool, codeDelim string, codeLines []string, width int, multilineMode bool, cursorLine int, cursorCol int) string {
 	var b strings.Builder
 
 	if waitingCode {
@@ -156,13 +156,34 @@ func RenderInput(buffer string, waitingCode bool, codeDelim string, codeLines []
 		lines := strings.Split(buffer, "\n")
 		hasMultipleLines := len(lines) > 1 || (len(lines) == 1 && lines[0] != "")
 
-		if hasMultipleLines {
-			b.WriteString(helpStyle.Render("[多行输入]"))
-			b.WriteString("\n")
+		if hasMultipleLines || multilineMode {
+			_ = "[多行输入]"
 			for i, line := range lines {
-				b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, line))
+				if multilineMode && i == cursorLine {
+					runes := []rune(line)
+					if cursorCol <= len(runes) {
+						var before, char, after string
+						if cursorCol < len(runes) {
+							before = string(runes[:cursorCol])
+							char = string(runes[cursorCol])
+							after = string(runes[cursorCol+1:])
+							b.WriteString(fmt.Sprintf("  %2d: %s%s%s%s\n", i+1, before, lipgloss.NewStyle().Background(lipgloss.Color("#3E4451")).Foreground(lipgloss.Color("#ABB2BF")).Render(char), after, " "))
+						} else {
+							before = string(runes)
+							b.WriteString(fmt.Sprintf("  %2d: %s%s\n", i+1, before, lipgloss.NewStyle().Background(lipgloss.Color("#3E4451")).Foreground(lipgloss.Color("#ABB2BF")).Render(" ")))
+						}
+					} else {
+						b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, line))
+					}
+				} else {
+					b.WriteString(fmt.Sprintf("  %2d: %s\n", i+1, line))
+				}
 			}
-			b.WriteString("[Enter换行 F5/F8发送]")
+			if multilineMode {
+				b.WriteString("[方向键移动 Enter换行 F5/F8发送 Del删除]")
+			} else {
+				b.WriteString("[Enter换行 F5/F8发送]")
+			}
 		} else {
 			prompt := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#61AFEF")).
@@ -254,7 +275,7 @@ func RenderHelp(width int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("多行输入: Enter换行, F5发送"))
+	b.WriteString(helpStyle.Render("多行输入: Enter进入, 方向键移动, F5发送"))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("命令: /help"))
 	b.WriteString("\n")

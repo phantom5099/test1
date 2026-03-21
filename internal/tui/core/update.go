@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbletea"
 	"go-llm-demo/internal/server/domain"
@@ -91,23 +92,71 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSubmit()
 
 	case tea.KeyUp:
+		if m.multilineMode {
+			m.moveCursorUp()
+			return *m, nil
+		}
 		if len(m.commandHistory) > 0 {
 			if m.cmdHistIndex < len(m.commandHistory)-1 {
 				m.cmdHistIndex++
 			}
 			if m.cmdHistIndex >= 0 && m.cmdHistIndex < len(m.commandHistory) {
 				m.inputBuffer = m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex]
+				m.cursorLine = 0
+				m.cursorCol = len(m.inputBuffer)
 			}
 		}
 		return *m, nil
 
 	case tea.KeyDown:
+		if m.multilineMode {
+			m.moveCursorDown()
+			return *m, nil
+		}
 		if m.cmdHistIndex > 0 {
 			m.cmdHistIndex--
 			m.inputBuffer = m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex]
 		} else {
 			m.cmdHistIndex = -1
 			m.inputBuffer = ""
+		}
+		return *m, nil
+
+	case tea.KeyLeft:
+		if m.multilineMode {
+			m.moveCursorLeft()
+			return *m, nil
+		}
+		return *m, nil
+
+	case tea.KeyRight:
+		if m.multilineMode {
+			m.moveCursorRight()
+			return *m, nil
+		}
+		return *m, nil
+
+	case tea.KeyHome:
+		if m.multilineMode {
+			m.cursorCol = 0
+			return *m, nil
+		}
+		return *m, nil
+
+	case tea.KeyEnd:
+		if m.multilineMode {
+			lines := strings.Split(m.inputBuffer, "\n")
+			if m.cursorLine < len(lines) {
+				m.cursorCol = len(lines[m.cursorLine])
+			}
+			return *m, nil
+		}
+		return *m, nil
+
+	case tea.KeyDelete:
+		if m.multilineMode {
+			m.deleteCharAtCursor()
+			return *m, nil
 		}
 		return *m, nil
 
@@ -121,18 +170,25 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		r := string(msg.Runes)
-		if m.inputBuffer == "" && len(r) > 0 && (r == " " || r == "\t") {
-			return *m, nil
+		if len(r) > 0 && r[0] >= 32 {
+			if m.multilineMode {
+				m.insertAtCursor(r)
+			} else {
+				m.inputBuffer += r
+				m.cursorCol++
+			}
+			m.cmdHistIndex = -1
 		}
-		m.inputBuffer += r
-		m.lastKeyWasEnter = false
-		m.cmdHistIndex = -1
 		return *m, nil
 
 	case tea.KeyBackspace:
-		if len(m.inputBuffer) > 0 {
-			runes := []rune(m.inputBuffer)
-			m.inputBuffer = string(runes[:len(runes)-1])
+		if m.multilineMode {
+			m.backspaceAtCursor()
+		} else {
+			if len(m.inputBuffer) > 0 {
+				runes := []rune(m.inputBuffer)
+				m.inputBuffer = string(runes[:len(runes)-1])
+			}
 		}
 		return *m, nil
 
@@ -147,11 +203,45 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleNewline() (tea.Model, tea.Cmd) {
-	m.inputBuffer += "\n"
+	if !m.multilineMode {
+		m.enterMultilineMode()
+	}
+
+	lines := strings.Split(m.inputBuffer, "\n")
+	if m.cursorLine < len(lines) {
+		line := lines[m.cursorLine]
+		runes := []rune(line)
+
+		if m.cursorCol > len(runes) {
+			m.cursorCol = len(runes)
+		}
+
+		before := string(runes[:m.cursorCol])
+		after := string(runes[m.cursorCol:])
+
+		lines[m.cursorLine] = before
+
+		newLines := make([]string, 0, len(lines)+1)
+		newLines = append(newLines, lines[:m.cursorLine+1]...)
+		newLines = append(newLines, after)
+		if m.cursorLine < len(lines)-1 {
+			newLines = append(newLines, lines[m.cursorLine+1:]...)
+		}
+
+		m.inputBuffer = strings.Join(newLines, "\n")
+	} else {
+		m.inputBuffer += "\n"
+	}
+	m.cursorLine++
+	m.cursorCol = 0
 	return *m, nil
 }
 
 func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
+	m.multilineMode = false
+	m.cursorLine = 0
+	m.cursorCol = 0
+
 	input := strings.TrimSpace(m.inputBuffer)
 	m.inputBuffer = ""
 
@@ -467,4 +557,140 @@ func detectLanguage(code string) (string, string) {
 	}
 
 	return "", ""
+}
+
+func (m *Model) moveCursorUp() {
+	if m.cursorLine > 0 {
+		m.cursorLine--
+		lines := strings.Split(m.inputBuffer, "\n")
+		if m.cursorLine < len(lines) {
+			lineRunes := utf8.RuneCountInString(lines[m.cursorLine])
+			if m.cursorCol > lineRunes {
+				m.cursorCol = lineRunes
+			}
+		}
+	}
+}
+
+func (m *Model) moveCursorDown() {
+	lines := strings.Split(m.inputBuffer, "\n")
+	if m.cursorLine < len(lines)-1 {
+		m.cursorLine++
+		lineRunes := utf8.RuneCountInString(lines[m.cursorLine])
+		if m.cursorCol > lineRunes {
+			m.cursorCol = lineRunes
+		}
+	}
+}
+
+func (m *Model) moveCursorLeft() {
+	if m.cursorLine == 0 && m.cursorCol == 0 {
+		return
+	}
+	if m.cursorCol > 0 {
+		m.cursorCol--
+	} else if m.cursorLine > 0 {
+		m.cursorLine--
+		lines := strings.Split(m.inputBuffer, "\n")
+		m.cursorCol = utf8.RuneCountInString(lines[m.cursorLine])
+	}
+}
+
+func (m *Model) moveCursorRight() {
+	lines := strings.Split(m.inputBuffer, "\n")
+	currentLineLen := utf8.RuneCountInString(lines[m.cursorLine])
+	if m.cursorCol < currentLineLen {
+		m.cursorCol++
+	} else if m.cursorLine < len(lines)-1 {
+		m.cursorLine++
+		m.cursorCol = 0
+	}
+}
+
+func (m *Model) insertAtCursor(text string) {
+	lines := strings.Split(m.inputBuffer, "\n")
+	if m.cursorLine >= len(lines) {
+		m.inputBuffer += text
+		m.cursorLine = len(lines) - 1
+		m.cursorCol = utf8.RuneCountInString(lines[m.cursorLine])
+		return
+	}
+
+	line := lines[m.cursorLine]
+	runes := []rune(line)
+	if m.cursorCol > len(runes) {
+		m.cursorCol = len(runes)
+	}
+	before := string(runes[:m.cursorCol])
+	after := string(runes[m.cursorCol:])
+	lines[m.cursorLine] = before + text + after
+	m.inputBuffer = strings.Join(lines, "\n")
+	m.cursorCol += utf8.RuneCountInString(text)
+}
+
+func (m *Model) deleteCharAtCursor() {
+	lines := strings.Split(m.inputBuffer, "\n")
+	if m.cursorLine >= len(lines) {
+		return
+	}
+
+	line := lines[m.cursorLine]
+	runes := []rune(line)
+
+	if m.cursorCol > len(runes) {
+		m.cursorCol = len(runes)
+	}
+
+	if m.cursorCol < len(runes) {
+		runes = append(runes[:m.cursorCol], runes[m.cursorCol+1:]...)
+		lines[m.cursorLine] = string(runes)
+		m.inputBuffer = strings.Join(lines, "\n")
+	} else if m.cursorLine < len(lines)-1 {
+		lines[m.cursorLine] = line + lines[m.cursorLine+1]
+		lines = append(lines[:m.cursorLine+1], lines[m.cursorLine+2:]...)
+		m.inputBuffer = strings.Join(lines, "\n")
+	}
+}
+
+func (m *Model) backspaceAtCursor() {
+	if m.cursorLine == 0 && m.cursorCol == 0 {
+		return
+	}
+
+	lines := strings.Split(m.inputBuffer, "\n")
+
+	if m.cursorCol > 0 {
+		line := lines[m.cursorLine]
+		runes := []rune(line)
+
+		if m.cursorCol > len(runes) {
+			m.cursorCol = len(runes)
+		}
+
+		if m.cursorCol > 0 {
+			runes = append(runes[:m.cursorCol-1], runes[m.cursorCol:]...)
+			lines[m.cursorLine] = string(runes)
+			m.inputBuffer = strings.Join(lines, "\n")
+			m.cursorCol--
+		}
+	} else if m.cursorLine > 0 {
+		lines = strings.Split(m.inputBuffer, "\n")
+		m.cursorLine--
+		m.cursorCol = utf8.RuneCountInString(lines[m.cursorLine])
+		lines[m.cursorLine] = lines[m.cursorLine] + lines[m.cursorLine+1]
+		lines = append(lines[:m.cursorLine+1], lines[m.cursorLine+2:]...)
+		m.inputBuffer = strings.Join(lines, "\n")
+	}
+}
+
+func (m *Model) enterMultilineMode() {
+	m.multilineMode = true
+	m.cursorLine = 0
+	m.cursorCol = utf8.RuneCountInString(m.inputBuffer)
+}
+
+func (m *Model) exitMultilineMode() {
+	m.multilineMode = false
+	m.cursorLine = 0
+	m.cursorCol = 0
 }
