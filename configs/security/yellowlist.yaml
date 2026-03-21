@@ -1,5 +1,5 @@
 rules:
   - target: "src/**/*.go"
-    write: ask
+    w: ask
   - command: "go build *"
-    exec: ask
+    x: ask

@@ -1,5 +1,5 @@
 rules:
   - target: "src/**/*.go"
-    read: allow
+    r: allow
   - command: "go version"
-    exec: allow
+    x: allow
