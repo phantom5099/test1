@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 type WriteTool struct{}
@@ -50,6 +51,15 @@ func (w *WriteTool) Run(params map[string]interface{}) *ToolResult {
 			ToolName: w.Name(),
 			Success:  false,
 			Error:    "content 必须是字符串",
+		}
+	}
+
+	// 创建目录（如果不存在）
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return &ToolResult{
+			ToolName: w.Name(),
+			Success:  false,
+			Error:    fmt.Sprintf("创建目录失败: %v", err),
 		}
 	}
 

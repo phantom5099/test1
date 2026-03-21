@@ -95,12 +95,12 @@ func RenderMessages(messages []Message, width int) string {
 			b.WriteString(renderContent(msg.Content))
 			b.WriteString("\n\n")
 
-			//系统消息不用展示给用户，直接推送到ai,如果需要可以复用
-			// case "system":
-			//     b.WriteString(systemMsgStyle.Render("[系统]"))
-			//     b.WriteString(" ")
-			//     b.WriteString(msg.Content)
-			//     b.WriteString("\n\n")
+		//系统消息不用展示给用户，直接推送到ai,如果需要可以复用
+		case "system":
+			b.WriteString(systemMsgStyle.Render("[系统]"))
+			b.WriteString(" ")
+			b.WriteString(msg.Content)
+			b.WriteString("\n\n")
 		}
 	}
 

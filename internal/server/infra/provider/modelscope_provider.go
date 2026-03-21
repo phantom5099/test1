@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	requestTimeout = 30 * time.Second
+	requestTimeout = 90 * time.Second
 	maxRetries     = 2
 )
 
