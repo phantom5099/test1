@@ -30,9 +30,9 @@ func NewChatProvider(model string) (domain.ChatProvider, error) {
 
 	switch strings.ToLower(providerName) {
 	case "modelscope":
-		apiKey := strings.TrimSpace(config.GlobalAppConfig.AI.APIKey)
+		apiKey := config.RuntimeAPIKey()
 		if apiKey == "" {
-			return nil, fmt.Errorf("missing ai.api_key in config.yaml")
+			return nil, fmt.Errorf("missing %s environment variable", config.APIKeyEnvVar)
 		}
 		modelName := model
 		if modelName == "" {

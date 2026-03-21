@@ -273,7 +273,7 @@ func validateModelScopeAPIKey(ctx context.Context, cfg *config.AppConfiguration)
 	if err != nil {
 		return fmt.Errorf("api key validation request create failed: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.AI.APIKey))
+	req.Header.Set("Authorization", "Bearer "+config.RuntimeAPIKey())
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := httpClient().Do(req)

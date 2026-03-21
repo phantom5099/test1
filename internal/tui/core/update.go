@@ -101,7 +101,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							if result.Success {
 								return ToolResultMsg{Result: result}
 							} else {
-								return ToolErrorMsg{Err: fmt.Errorf(result.Error)}
+								return ToolErrorMsg{Err: fmt.Errorf("%s", result.Error)}
 							}
 						}
 					}

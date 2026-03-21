@@ -9,6 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const APIKeyEnvVar = "AI_API_KEY"
+
 type ModelDetail struct {
 	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
@@ -102,6 +104,7 @@ func LoadBootstrapConfig(filePath string) (*AppConfiguration, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse app config YAML: %w", err)
 	}
+	cfg.AI.APIKey = ""
 	if err := cfg.ValidateBase(); err != nil {
 		return nil, err
 	}
@@ -127,7 +130,9 @@ func WriteAppConfig(filePath string, cfg *AppConfiguration) error {
 	if cfg == nil {
 		return fmt.Errorf("app config is nil")
 	}
-	data, err := yaml.Marshal(cfg)
+	cfgCopy := *cfg
+	cfgCopy.AI.APIKey = ""
+	data, err := yaml.Marshal(&cfgCopy)
 	if err != nil {
 		return fmt.Errorf("failed to marshal app config YAML: %w", err)
 	}
@@ -190,10 +195,14 @@ func (c *AppConfiguration) ValidateRuntime() error {
 	if err := c.ValidateBase(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.AI.APIKey) == "" {
-		return fmt.Errorf("invalid config: ai.api_key is required")
+	if RuntimeAPIKey() == "" {
+		return fmt.Errorf("invalid runtime: %s environment variable is required", APIKeyEnvVar)
 	}
 	return nil
+}
+
+func RuntimeAPIKey() string {
+	return strings.TrimSpace(os.Getenv(APIKeyEnvVar))
 }
 
 func GetChatModelURL(modelName string) (string, bool) {
