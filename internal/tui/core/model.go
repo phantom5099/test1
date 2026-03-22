@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"go-llm-demo/configs"
 	"go-llm-demo/internal/tui/infra"
 )
 
@@ -46,6 +47,8 @@ type Model struct {
 	multilineMode bool
 
 	toolExecuting bool
+	apiKeyReady   bool
+	configPath    string
 
 	mu sync.Mutex
 }
@@ -89,7 +92,7 @@ var (
 
 // NewModel 创建 TUI 状态模型。
 // historyTurns 用于限制发送给后端的短期对话轮数，避免原始消息无限增长。
-func NewModel(client infra.ChatClient, persona string, historyTurns int) Model {
+func NewModel(client infra.ChatClient, persona string, historyTurns int, configPath string) Model {
 	stats, _ := client.GetMemoryStats(context.Background())
 	if stats == nil {
 		stats = &infra.MemoryStats{}
@@ -109,6 +112,8 @@ func NewModel(client infra.ChatClient, persona string, historyTurns int) Model {
 		cmdHistIndex:   -1,
 		client:         client,
 		persona:        persona,
+		apiKeyReady:    configs.RuntimeAPIKey() != "",
+		configPath:     configPath,
 	}
 }
 
