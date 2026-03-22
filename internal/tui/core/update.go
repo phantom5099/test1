@@ -48,7 +48,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.streamResponseFromChannel()
 
 	case StreamDoneMsg:
-		m.mu.Lock()
+		mu := m.mutex()
+		mu.Lock()
 		m.generating = false
 		m.streamChan = nil
 
@@ -63,20 +64,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				shouldCheckToolCall = false
 			}
 		}
-		m.mu.Unlock()
+		mu.Unlock()
 
 		// 检查最后一条AI消息是否为JSON格式的工具调用
 		if shouldCheckToolCall {
 			var jsonData map[string]interface{}
 			if err := json.Unmarshal([]byte(lastContent), &jsonData); err == nil {
 				if toolName, ok := jsonData["tool"].(string); ok && toolName != "" {
-					m.mu.Lock()
+					mu := m.mutex()
+					mu.Lock()
 					if m.toolExecuting {
-						m.mu.Unlock()
+						mu.Unlock()
 						return m, nil
 					}
 					m.toolExecuting = true
-					m.mu.Unlock()
+					mu.Unlock()
 
 					// 显示工具执行中提示
 					if toolParams, ok := jsonData["params"].(map[string]interface{}); ok {
@@ -106,9 +108,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case "grep":
 							tool = &tools.GrepTool{}
 						default:
-							m.mu.Lock()
+							mu := m.mutex()
+							mu.Lock()
 							m.toolExecuting = false
-							m.mu.Unlock()
+							mu.Unlock()
 							return ToolErrorMsg{Err: fmt.Errorf("不支持的工具: %s", toolName)}
 						}
 
@@ -117,9 +120,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							if paramsCasted, ok := paramsRaw.(map[string]interface{}); ok {
 								paramsMap = convertSnakeCaseToCamelCase(paramsCasted)
 							} else {
-								m.mu.Lock()
+								mu := m.mutex()
+								mu.Lock()
 								m.toolExecuting = false
-								m.mu.Unlock()
+								mu.Unlock()
 								return ToolErrorMsg{Err: fmt.Errorf("工具参数格式错误")}
 							}
 						} else {
@@ -141,7 +145,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamErrorMsg:
-		m.mu.Lock()
+		mu := m.mutex()
+		mu.Lock()
 		m.generating = false
 		m.streamChan = nil
 		replacedPlaceholder := false
@@ -153,7 +158,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				replacedPlaceholder = true
 			}
 		}
-		m.mu.Unlock()
+		mu.Unlock()
 		if !replacedPlaceholder {
 			m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
 		}
@@ -183,9 +188,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case ToolResultMsg:
-		m.mu.Lock()
+		mu := m.mutex()
+		mu.Lock()
 		m.toolExecuting = false
-		m.mu.Unlock()
+		mu.Unlock()
 		// 将工具执行结果添加为系统消息，然后重新获取AI响应
 		m.AddMessage("system", fmt.Sprintf("工具执行结果: %s", msg.Result.Output))
 		m.AddMessage("assistant", "")
@@ -197,9 +203,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.streamResponse(messages)
 
 	case ToolErrorMsg:
-		m.mu.Lock()
+		mu := m.mutex()
+		mu.Lock()
 		m.toolExecuting = false
-		m.mu.Unlock()
+		mu.Unlock()
 		// 将工具执行错误添加为系统消息
 		m.AddMessage("system", fmt.Sprintf("工具执行错误: %v", msg.Err))
 		m.AddMessage("assistant", "")
@@ -552,8 +559,9 @@ func formatTypeStats(byType map[string]int) string {
 }
 
 func (m *Model) buildMessages() []infra.Message {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	mu := m.mutex()
+	mu.Lock()
+	defer mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
 
 	// 按照消息的原始时间顺序进行迭代
