@@ -38,7 +38,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	persona := loadPersonaPrompt(configs.GlobalAppConfig.Persona.FilePath)
+	persona, personaPath, err := configs.LoadPersonaPrompt(configs.GlobalAppConfig.Persona.FilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告: 人设加载失败: %v\n", err)
+	} else if personaPath != "" && strings.TrimSpace(configs.GlobalAppConfig.Persona.FilePath) != personaPath {
+		fmt.Fprintf(os.Stderr, "提示: 人设已从 %s 回退加载\n", personaPath)
+	}
 	historyTurns := configs.GlobalAppConfig.History.ShortTermTurns
 
 	client, err := infra.NewLocalChatClient()
@@ -47,8 +52,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	model := core.NewModel(client, persona, historyTurns)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	model := core.NewModel(client, persona, historyTurns, "config.yaml")
+	p := tea.NewProgram(model,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "运行失败: %v\n", err)
 		os.Exit(1)
@@ -63,20 +71,41 @@ func ensureAPIKeyInteractive(ctx context.Context, scanner *bufio.Scanner, config
 	if created {
 		fmt.Printf("已创建 %s\n", configPath)
 	}
-	if configs.RuntimeAPIKey() == "" {
-		fmt.Printf("未检测到环境变量 %s。请先在系统环境变量中设置 API Key 后重新启动。\n", configs.APIKeyEnvVar)
-		fmt.Println("Windows 示例: setx AI_API_KEY \"your-api-key\"")
-		return false, nil
-	}
 
 	for {
+		if cfg.RuntimeAPIKey() == "" {
+			envName := cfg.APIKeyEnvVarName()
+			fmt.Printf("未检测到环境变量 %s。可使用 /apikey <env_name>、/provider <name> 切换配置，或先设置该环境变量后再 /retry。\n", envName)
+			fmt.Printf("Windows 示例: setx %s \"your-api-key\"\n", envName)
+			result, handleErr := handleSetupDecision(scanner, cfg, false, configPath)
+			if handleErr != nil {
+				return false, handleErr
+			}
+			if result == setupExit {
+				return false, nil
+			}
+			continue
+		}
+
 		if err := provider.ValidateChatAPIKey(ctx, cfg); err == nil {
+			if saveErr := configs.WriteAppConfig(configPath, cfg); saveErr != nil {
+				return false, saveErr
+			}
+			configs.GlobalAppConfig = cfg
 			fmt.Println("API key 验证通过。")
 			return true, nil
 		} else if errors.Is(err, provider.ErrInvalidAPIKey) {
-			fmt.Printf("环境变量 %s 中的 API key 无效: %v\n", configs.APIKeyEnvVar, err)
+			fmt.Printf("环境变量 %s 中的 API key 无效: %v\n", cfg.APIKeyEnvVarName(), err)
+			result, handleErr := handleSetupDecision(scanner, cfg, false, configPath)
+			if handleErr != nil {
+				return false, handleErr
+			}
+			if result == setupExit {
+				return false, nil
+			}
+			continue
 		} else if errors.Is(err, provider.ErrAPIKeyValidationSoft) {
-			fmt.Printf("无法确认环境变量 %s 中的 API key 有效性: %v\n", configs.APIKeyEnvVar, err)
+			fmt.Printf("无法确认环境变量 %s 中的 API key 有效性: %v\n", cfg.APIKeyEnvVarName(), err)
 			result, handleErr := handleSetupDecision(scanner, cfg, true, configPath)
 			if handleErr != nil {
 				return false, handleErr
@@ -116,9 +145,9 @@ const (
 
 func handleSetupDecision(scanner *bufio.Scanner, cfg *configs.AppConfiguration, allowContinue bool, configPath string) (setupDecision, error) {
 	for {
-		prompt := "选择 /retry, /models, /switch <model>, 或 /exit > "
+		prompt := "选择 /retry, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit > "
 		if allowContinue {
-			prompt = "选择 /retry, /continue, /models, /switch <model>, 或 /exit > "
+			prompt = "选择 /retry, /continue, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit > "
 		}
 		decision, ok, inputErr := readInteractiveLine(scanner, prompt)
 		if inputErr != nil {
@@ -136,6 +165,14 @@ func handleSetupDecision(scanner *bufio.Scanner, cfg *configs.AppConfiguration, 
 		switch strings.ToLower(fields[0]) {
 		case "/retry":
 			return setupRetry, nil
+		case "/apikey":
+			if len(fields) < 2 {
+				fmt.Println("用法: /apikey <env_name>")
+				continue
+			}
+			applyAPIKeyEnvName(cfg, fields[1])
+			fmt.Printf("已切换 API Key 环境变量名为: %s\n", cfg.APIKeyEnvVarName())
+			return setupRetry, nil
 		case "/continue":
 			if !allowContinue {
 				fmt.Println("/continue 仅在网络或服务问题导致无法确认时可用。")
@@ -147,17 +184,40 @@ func handleSetupDecision(scanner *bufio.Scanner, cfg *configs.AppConfiguration, 
 			fmt.Println("继续启动，使用当前 API key 和模型。")
 			return setupContinue, nil
 		case "/models":
-			printAvailableModels()
+			printAvailableModels(cfg)
+		case "/provider":
+			if len(fields) < 2 {
+				fmt.Println("用法: /provider <name>")
+				printSupportedProviders()
+				continue
+			}
+			providerName, ok := provider.NormalizeProviderName(fields[1])
+			if !ok {
+				fmt.Printf("不支持的提供商 %q\n", fields[1])
+				printSupportedProviders()
+				continue
+			}
+			cfg.AI.Provider = providerName
+			if provider.ProviderSupportsModelCatalog(providerName) && !provider.IsSupportedModelForConfig(cfg, cfg.AI.Model) {
+				cfg.AI.Model = provider.DefaultModelForConfig(cfg)
+			}
+			fmt.Printf("已切换到提供商: %s\n", providerName)
+			if provider.ProviderSupportsModelCatalog(providerName) {
+				fmt.Printf("当前模型: %s\n", cfg.AI.Model)
+			} else {
+				fmt.Printf("当前提供商不提供内置模型列表，请确认 ai.model，或使用 /switch <model> 设置。当前模型: %s\n", cfg.AI.Model)
+			}
+			return setupRetry, nil
 		case "/switch":
 			if len(fields) < 2 {
 				fmt.Println("用法: /switch <model>")
-				printAvailableModels()
+				printAvailableModels(cfg)
 				continue
 			}
-			target := fields[1]
-			if !provider.IsSupportedModel(target) {
+			target := strings.Join(fields[1:], " ")
+			if provider.ProviderSupportsModelCatalog(cfg.AI.Provider) && !provider.IsSupportedModelForConfig(cfg, target) {
 				fmt.Printf("模型 %q 不受支持\n", target)
-				printAvailableModels()
+				printAvailableModels(cfg)
 				continue
 			}
 			cfg.AI.Model = target
@@ -167,12 +227,19 @@ func handleSetupDecision(scanner *bufio.Scanner, cfg *configs.AppConfiguration, 
 			return setupExit, nil
 		default:
 			if allowContinue {
-				fmt.Println("请输入 /retry, /continue, /models, /switch <model>, 或 /exit。")
+				fmt.Println("请输入 /retry, /continue, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit。")
 			} else {
-				fmt.Println("请输入 /retry, /models, /switch <model>, 或 /exit。")
+				fmt.Println("请输入 /retry, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit。")
 			}
 		}
 	}
+}
+
+func applyAPIKeyEnvName(cfg *configs.AppConfiguration, envName string) {
+	if cfg == nil {
+		return
+	}
+	cfg.AI.APIKey = strings.TrimSpace(envName)
 }
 
 func readInteractiveLine(scanner *bufio.Scanner, prompt string) (string, bool, error) {
@@ -196,10 +263,25 @@ func readInteractiveLine(scanner *bufio.Scanner, prompt string) (string, bool, e
 	}
 }
 
-func printAvailableModels() {
+func printAvailableModels(cfg *configs.AppConfiguration) {
+	providerName := provider.CurrentProvider()
+	if cfg != nil {
+		providerName = cfg.AI.Provider
+	}
+	if !provider.ProviderSupportsModelCatalog(providerName) {
+		fmt.Printf("当前提供商 %s 不提供内置模型列表，请使用 /switch <model> 手动设置模型。\n", providerName)
+		return
+	}
 	fmt.Println("可用模型:")
-	for _, model := range provider.SupportedModels() {
+	for _, model := range provider.SupportedModelsForConfig(cfg) {
 		fmt.Printf("  %s\n", model)
+	}
+}
+
+func printSupportedProviders() {
+	fmt.Println("可用提供商:")
+	for _, name := range provider.SupportedProviders() {
+		fmt.Printf("  %s\n", name)
 	}
 }
 

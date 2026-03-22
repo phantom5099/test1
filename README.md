@@ -6,25 +6,40 @@
 
 1. TUI 对话与流式输出
 2. `/switch` 切换聊天模型
-3. 结构化长期记忆检索与写回
-4. session memory 与短期上下文保留
-5. 人设文件注入
-6. 启动时校验环境变量 API Key
-7. `/memory`、`/clear-memory confirm`、`/clear-context`
+3. `/provider` 切换模型提供商
+4. 结构化长期记忆检索与写回
+5. session memory 与短期上下文保留
+6. 人设文件注入
+7. 启动时校验环境变量 API Key
+8. `/memory`、`/clear-memory confirm`、`/clear-context`
 
 ## 配置方式
 
-只需要维护根目录下的 `config.yaml`，并在系统环境变量中设置 `AI_API_KEY`。
+只需要维护根目录下的 `config.yaml`，并在系统环境变量中设置 API Key。
 
 - 可以先参考 `config.example.yaml`
 - 首次启动时如果 `config.yaml` 不存在，程序会自动创建默认配置
 - API Key 配置方法见下方 `API Key 配置`
-- 如果 Key 校验失败，请更新环境变量后重新启动
-- 如果网络异常导致无法确认 Key 是否有效，可使用 `/retry`、`/continue`、`/models`、`/switch <model>` 或 `/exit`
+- `ai.api_key` 填写的是环境变量名；留空时会回退到 `AI_API_KEY`
+- 如果 Key 校验失败，可使用 `/apikey <env_name>` 或 `/provider <name>` 调整配置
+- 如果网络异常导致无法确认 Key 是否有效，可使用 `/retry`、`/continue`、`/apikey <env_name>`、`/provider <name>`、`/models`、`/switch <model>` 或 `/exit`
+- 支持的 provider：`modelscope`、`deepseek`、`siliconflow`、`豆包大模型`、`openai`
+- 只有 `modelscope` 会通过 `/models` 显示内置模型列表；其他 provider 需要手动设置 `ai.model`
 
 ## API Key 配置
 
-程序现在只从系统环境变量 `AI_API_KEY` 读取 API Key，不再从 `config.yaml` 读取真实密钥。
+程序会从 `config.yaml` 的 `ai.api_key` 指定的系统环境变量中读取真实 API Key；如果该字段为空，则默认读取 `AI_API_KEY`。`config.yaml` 不存储真实密钥。
+
+例如：
+
+```yaml
+ai:
+  provider: "modelscope"
+  api_key: "MY_TEAM_API_KEY"
+  model: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+```
+
+这表示程序会读取系统环境变量 `MY_TEAM_API_KEY`。
 
 Windows 永久生效：
 
@@ -65,7 +80,7 @@ app:
 
 ai:
   provider: "modelscope"
-  api_key: ""
+  api_key: "AI_API_KEY"
   model: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
 
 memory:
@@ -96,14 +111,16 @@ models:
 
 说明：
 
-- `ai.api_key`：已废弃，占位保留，不再读取真实 Key
+- `ai.api_key`：API Key 对应的环境变量名；为空时回退到 `AI_API_KEY`
+- `ai.provider`：当前模型提供商，支持 `modelscope`、`deepseek`、`siliconflow`、`豆包大模型`、`openai`
+- `ai.model`：当前 provider 使用的模型名；非 `modelscope` 需要手动填写或通过 `/switch <model>` 设置
 - `memory.storage_path`：长期结构化记忆文件
 - `memory.persist_types`：允许持久化的结构化记忆类型
 - `memory.min_match_score`：最低召回分数
 - `memory.max_prompt_chars`：记忆注入 prompt 的总字符上限
 - `history.short_term_turns`：保留最近多少轮上下文
 - `persona.file_path`：启动时加载的人设文件
-- `models.chat.models`：聊天模型与接口地址映射
+- `models.chat.models`：`modelscope` 使用的聊天模型与接口地址映射
 
 ## Memory 设计
 
@@ -132,6 +149,8 @@ go run ./cmd/server
 ## 可用命令
 
 - `/models`：查看支持的模型
+- `/provider <name>`：切换当前模型提供商
+- `/apikey <env_name>`：切换当前读取的 API Key 环境变量名并立即校验
 - `/switch <model>`：切换当前聊天模型
 - `/memory`：查看长期记忆和 session memory 状态，以及各类型统计
 - `/clear-memory confirm`：确认后清空长期结构化记忆
@@ -148,7 +167,8 @@ go run ./cmd/server
 
 ## 安全与本地文件
 
-- API Key 必须放在系统环境变量 `AI_API_KEY` 中，不再写入 `config.yaml`
+- `config.yaml` 中的 `ai.api_key` 仅保存环境变量名，不写入真实密钥
+- `ai.api_key` 为空时默认读取系统环境变量 `AI_API_KEY`
 - `config.yaml` 已在 `.gitignore` 中忽略，不应提交真实密钥
 - `data/` 已在 `.gitignore` 中忽略，本地记忆不会默认入库
 - `.env` 不再是主配置来源，如保留仅用于个人兼容场景

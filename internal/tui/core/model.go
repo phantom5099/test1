@@ -2,10 +2,11 @@ package core
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"go-llm-demo/configs"
 	"go-llm-demo/internal/tui/infra"
 )
 
@@ -27,10 +28,6 @@ type Model struct {
 	messages     []Message
 	historyTurns int
 
-	codeLines   []string
-	codeDelim   string
-	waitingCode bool
-
 	generating  bool
 	activeModel string
 
@@ -47,6 +44,14 @@ type Model struct {
 	cursorLine    int
 	cursorCol     int
 	multilineMode bool
+
+	toolExecuting bool
+	apiKeyReady   bool
+	configPath    string
+
+	streamChan <-chan string
+
+	mu sync.Mutex
 }
 
 type Message struct {
@@ -56,39 +61,9 @@ type Message struct {
 	Streaming bool
 }
 
-var (
-	accentStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#61AFEF")).
-			Bold(true)
-
-	userMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#98C379")).
-			Bold(true)
-
-	assistantMsgStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E5C07B"))
-
-	systemMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#C678DD"))
-
-	timestampStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#5C6370"))
-
-	codeBlockStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#ABB2BF")).
-			Background(lipgloss.Color("#282C34")).
-			Padding(0, 1)
-
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#61AFEF"))
-
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#5C6370"))
-)
-
 // NewModel 创建 TUI 状态模型。
 // historyTurns 用于限制发送给后端的短期对话轮数，避免原始消息无限增长。
-func NewModel(client infra.ChatClient, persona string, historyTurns int) Model {
+func NewModel(client infra.ChatClient, persona string, historyTurns int, configPath string) Model {
 	stats, _ := client.GetMemoryStats(context.Background())
 	if stats == nil {
 		stats = &infra.MemoryStats{}
@@ -108,6 +83,8 @@ func NewModel(client infra.ChatClient, persona string, historyTurns int) Model {
 		cmdHistIndex:   -1,
 		client:         client,
 		persona:        persona,
+		apiKeyReady:    configs.RuntimeAPIKey() != "",
+		configPath:     configPath,
 	}
 }
 
@@ -128,6 +105,8 @@ func (m *Model) SetHeight(h int) {
 
 // AddMessage 向聊天历史追加一条带时间戳的消息。
 func (m *Model) AddMessage(role, content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.messages = append(m.messages, Message{
 		Role:      role,
 		Content:   content,
@@ -137,6 +116,8 @@ func (m *Model) AddMessage(role, content string) {
 
 // AppendLastMessage 将流式内容追加到最后一条消息中。
 func (m *Model) AppendLastMessage(content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.messages) > 0 {
 		m.messages[len(m.messages)-1].Content += content
 	}
@@ -144,6 +125,8 @@ func (m *Model) AppendLastMessage(content string) {
 
 // FinishLastMessage 将最后一条消息标记为结束流式输出。
 func (m *Model) FinishLastMessage() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.messages) > 0 {
 		m.messages[len(m.messages)-1].Streaming = false
 	}
@@ -151,6 +134,8 @@ func (m *Model) FinishLastMessage() {
 
 // TrimHistory 在保留系统消息的同时裁剪最近的非系统对话轮次。
 func (m *Model) TrimHistory(maxTurns int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.messages) <= maxTurns*2 {
 		return
 	}

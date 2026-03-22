@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go-llm-demo/configs"
 	"go-llm-demo/internal/server/domain"
+	"go-llm-demo/internal/server/infra/provider"
 	"go-llm-demo/internal/server/infra/tools"
 	"go-llm-demo/internal/tui/infra"
 
@@ -35,76 +38,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.generating {
 			m.AppendLastMessage(msg.Content)
 		}
-		return m, nil
+		return m, m.streamResponseFromChannel()
 
 	case StreamDoneMsg:
+		m.mu.Lock()
 		m.generating = false
-		m.FinishLastMessage()
+		m.streamChan = nil
 
-		// 检查最后一条AI消息是否为JSON格式的工具调用
+		var lastContent string
+		shouldCheckToolCall := !m.toolExecuting && len(m.messages) > 0
 		if len(m.messages) > 0 {
 			lastMsg := &m.messages[len(m.messages)-1]
+			lastMsg.Streaming = false
 			if lastMsg.Role == "assistant" {
-				// 验证是否为JSON
-				var jsonData map[string]interface{}
-				if err := json.Unmarshal([]byte(lastMsg.Content), &jsonData); err == nil {
-					// 检查是否包含工具调用字段
-					if toolName, ok := jsonData["tool"].(string); ok && toolName != "" {
-						// 显示工具执行中提示
-						if toolParams, ok := jsonData["params"].(map[string]interface{}); ok {
-							if filePath, ok := toolParams["filePath"].(string); ok && toolName == "read" {
-								m.AddMessage("system", fmt.Sprintf("read:正在读取%s文件...", filePath))
-							} else if filePath, ok := toolParams["filePath"].(string); ok && (toolName == "edit" || toolName == "write") {
-								m.AddMessage("system", fmt.Sprintf("%s:正在处理%s文件...", toolName, filePath))
-							} else {
-								m.AddMessage("system", fmt.Sprintf("%s:正在执行工具...", toolName))
-							}
+				lastContent = lastMsg.Content
+			} else {
+				shouldCheckToolCall = false
+			}
+		}
+		m.mu.Unlock()
+
+		// 检查最后一条AI消息是否为JSON格式的工具调用
+		if shouldCheckToolCall {
+			var jsonData map[string]interface{}
+			if err := json.Unmarshal([]byte(lastContent), &jsonData); err == nil {
+				if toolName, ok := jsonData["tool"].(string); ok && toolName != "" {
+					m.mu.Lock()
+					if m.toolExecuting {
+						m.mu.Unlock()
+						return m, nil
+					}
+					m.toolExecuting = true
+					m.mu.Unlock()
+
+					// 显示工具执行中提示
+					if toolParams, ok := jsonData["params"].(map[string]interface{}); ok {
+						if filePath, ok := toolParams["filePath"].(string); ok && toolName == "read" {
+							m.AddMessage("system", fmt.Sprintf("read:正在读取%s文件...", filePath))
+						} else if filePath, ok := toolParams["filePath"].(string); ok && (toolName == "edit" || toolName == "write") {
+							m.AddMessage("system", fmt.Sprintf("%s:正在处理%s文件...", toolName, filePath))
+						} else {
+							m.AddMessage("system", fmt.Sprintf("%s:正在执行工具...", toolName))
+						}
+					}
+
+					// 在goroutine中执行工具调用
+					return m, func() tea.Msg {
+						var tool tools.Tool
+						switch toolName {
+						case "read":
+							tool = &tools.ReadTool{}
+						case "write":
+							tool = &tools.WriteTool{}
+						case "edit":
+							tool = &tools.EditTool{}
+						case "bash":
+							tool = &tools.BashTool{}
+						case "list":
+							tool = &tools.ListTool{}
+						case "grep":
+							tool = &tools.GrepTool{}
+						default:
+							m.mu.Lock()
+							m.toolExecuting = false
+							m.mu.Unlock()
+							return ToolErrorMsg{Err: fmt.Errorf("不支持的工具: %s", toolName)}
 						}
 
-						// 在goroutine中执行工具调用
-						return m, func() tea.Msg {
-							// 创建工具实例并执行
-							var tool tools.Tool
-							switch toolName {
-							case "read":
-								tool = &tools.ReadTool{}
-							case "write":
-								tool = &tools.WriteTool{}
-							case "edit":
-								tool = &tools.EditTool{}
-							case "bash":
-								tool = &tools.BashTool{}
-							case "list":
-								tool = &tools.ListTool{}
-							case "grep":
-								tool = &tools.GrepTool{}
-							default:
-								return ToolErrorMsg{Err: fmt.Errorf("不支持的工具: %s", toolName)}
-							}
-
-							// 安全地获取并转换参数
-							var paramsMap map[string]interface{}
-							if paramsRaw, ok := jsonData["params"]; ok {
-								if paramsCasted, ok := paramsRaw.(map[string]interface{}); ok {
-									// 转换参数键从snake_case到camelCase以兼容AI生成的参数
-									paramsMap = convertSnakeCaseToCamelCase(paramsCasted)
-								} else {
-									return ToolErrorMsg{Err: fmt.Errorf("工具参数格式错误")}
-								}
+						var paramsMap map[string]interface{}
+						if paramsRaw, ok := jsonData["params"]; ok {
+							if paramsCasted, ok := paramsRaw.(map[string]interface{}); ok {
+								paramsMap = convertSnakeCaseToCamelCase(paramsCasted)
 							} else {
-								paramsMap = make(map[string]interface{})
+								m.mu.Lock()
+								m.toolExecuting = false
+								m.mu.Unlock()
+								return ToolErrorMsg{Err: fmt.Errorf("工具参数格式错误")}
 							}
-
-							// 执行工具
-							result := tool.Run(paramsMap)
-
-							// 将结果作为系统消息返回
-							if result.Success {
-								return ToolResultMsg{Result: result}
-							} else {
-								return ToolErrorMsg{Err: fmt.Errorf("%s", result.Error)}
-							}
+						} else {
+							paramsMap = make(map[string]interface{})
 						}
+
+						result := tool.Run(paramsMap)
+
+						if result.Success {
+							return ToolResultMsg{Result: result}
+						}
+						return ToolErrorMsg{Err: fmt.Errorf("%s", result.Error)}
 					}
 				}
 			}
@@ -113,8 +133,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamErrorMsg:
+		m.mu.Lock()
 		m.generating = false
-		m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
+		m.streamChan = nil
+		replacedPlaceholder := false
+		if len(m.messages) > 0 {
+			lastMsg := &m.messages[len(m.messages)-1]
+			if lastMsg.Role == "assistant" && strings.TrimSpace(lastMsg.Content) == "" {
+				lastMsg.Content = fmt.Sprintf("错误: %v", msg.Err)
+				lastMsg.Streaming = false
+				replacedPlaceholder = true
+			}
+		}
+		m.mu.Unlock()
+		if !replacedPlaceholder {
+			m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
+		}
 		m.TrimHistory(m.historyTurns)
 		return m, nil
 
@@ -137,6 +171,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case ToolResultMsg:
+		m.mu.Lock()
+		m.toolExecuting = false
+		m.mu.Unlock()
 		// 将工具执行结果添加为系统消息，然后重新获取AI响应
 		m.AddMessage("system", fmt.Sprintf("工具执行结果: %s", msg.Result.Output))
 		m.AddMessage("assistant", "")
@@ -147,6 +184,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.streamResponse(messages)
 
 	case ToolErrorMsg:
+		m.mu.Lock()
+		m.toolExecuting = false
+		m.mu.Unlock()
 		// 将工具执行错误添加为系统消息
 		m.AddMessage("system", fmt.Sprintf("工具执行错误: %v", msg.Err))
 		m.AddMessage("assistant", "")
@@ -162,20 +202,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
-
-	case tea.KeyCtrlC:
-		if m.waitingCode {
-			m.waitingCode = false
-			m.codeLines = nil
-			m.codeDelim = ""
-		}
-		return *m, nil
-
-	case tea.KeyCtrlD:
-		if m.waitingCode {
-			return *m, m.submitCode()
-		}
-		return *m, nil
 
 	case tea.KeyEnter:
 		m.lastKeyWasEnter = true
@@ -365,7 +391,7 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.inputBuffer)
 	m.inputBuffer = ""
 
-	if input == "" && !m.waitingCode {
+	if input == "" {
 		return *m, nil
 	}
 
@@ -375,23 +401,12 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	if m.waitingCode {
-		if isEndDelimiter(input, m.codeDelim) {
-			return *m, m.submitCode()
-		}
-		m.codeLines = append(m.codeLines, input)
-		return *m, nil
-	}
-
-	if isStartDelimiter(input) {
-		m.waitingCode = true
-		m.codeDelim = getDelimiter(input)
-		m.codeLines = nil
-		return *m, nil
-	}
-
 	if strings.HasPrefix(input, "/") {
 		return m.handleCommand(input)
+	}
+	if !m.apiKeyReady {
+		m.AddMessage("assistant", "当前 API Key 未通过校验，请使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。")
+		return *m, nil
 	}
 
 	m.AddMessage("user", input)
@@ -415,26 +430,136 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 
 	cmd := fields[0]
 	args := fields[1:]
+	if !m.apiKeyReady && !isAPIKeyRecoveryCommand(cmd) {
+		m.AddMessage("assistant", "当前 API Key 未通过校验，仅支持 /apikey <env_name>、/provider <name>、/help、/models、/switch <model> 或 /exit。")
+		return *m, nil
+	}
 
 	switch cmd {
 	case "/help":
 		m.mode = ModeHelp
 	case "/exit", "/quit", "/q":
 		return *m, tea.Quit
+	case "/apikey":
+		if len(args) == 0 {
+			m.AddMessage("assistant", "用法: /apikey <env_name>")
+			return *m, nil
+		}
+		cfg := configs.GlobalAppConfig
+		if cfg == nil {
+			m.AddMessage("assistant", "当前配置未加载，无法切换 API Key 环境变量名")
+			return *m, nil
+		}
+		previousEnvName := cfg.AI.APIKey
+		cfg.AI.APIKey = strings.TrimSpace(args[0])
+		envName := cfg.APIKeyEnvVarName()
+		if cfg.RuntimeAPIKey() == "" {
+			m.apiKeyReady = false
+			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 未设置。请继续使用 /apikey <env_name> 切换，或 /exit 退出。", envName))
+			return *m, nil
+		}
+		err := provider.ValidateChatAPIKey(context.Background(), cfg)
+		if err == nil {
+			if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+				cfg.AI.APIKey = previousEnvName
+				m.apiKeyReady = configs.RuntimeAPIKey() != ""
+				m.AddMessage("assistant", fmt.Sprintf("切换 API Key 环境变量名失败: %v", writeErr))
+				return *m, nil
+			}
+			m.apiKeyReady = true
+			m.AddMessage("assistant", fmt.Sprintf("已切换 API Key 环境变量名为 %s，并通过校验。", envName))
+			return *m, nil
+		}
+		m.apiKeyReady = false
+		if errors.Is(err, provider.ErrInvalidAPIKey) {
+			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 中的 API Key 无效：%v。请继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。", envName, err))
+			return *m, nil
+		}
+		m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 的 API Key 未通过校验：%v。请继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。", envName, err))
+		return *m, nil
+	case "/provider":
+		if len(args) == 0 {
+			m.AddMessage("assistant", fmt.Sprintf("用法: /provider <name>\n可用提供商:\n  - %s", strings.Join(provider.SupportedProviders(), "\n  - ")))
+			return *m, nil
+		}
+		cfg := configs.GlobalAppConfig
+		if cfg == nil {
+			m.AddMessage("assistant", "当前配置未加载，无法切换提供商")
+			return *m, nil
+		}
+		providerName, ok := provider.NormalizeProviderName(strings.Join(args, " "))
+		if !ok {
+			m.AddMessage("assistant", fmt.Sprintf("不支持的提供商: %s\n可用提供商:\n  - %s", strings.Join(args, " "), strings.Join(provider.SupportedProviders(), "\n  - ")))
+			return *m, nil
+		}
+		cfg.AI.Provider = providerName
+		if provider.ProviderSupportsModelCatalog(providerName) && !provider.IsSupportedModelForConfig(cfg, cfg.AI.Model) {
+			cfg.AI.Model = provider.DefaultModelForConfig(cfg)
+		}
+		m.activeModel = cfg.AI.Model
+		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+			m.AddMessage("assistant", fmt.Sprintf("切换提供商失败: %v", writeErr))
+			return *m, nil
+		}
+		if cfg.RuntimeAPIKey() == "" {
+			m.apiKeyReady = false
+			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，但当前环境变量 %s 未设置。请使用 /apikey <env_name> 或设置该环境变量。", providerName, cfg.APIKeyEnvVarName()))
+			return *m, nil
+		}
+		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
+			m.apiKeyReady = true
+			if provider.ProviderSupportsModelCatalog(providerName) {
+				m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，当前模型: %s。", providerName, cfg.AI.Model))
+			} else {
+				m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s。该提供商不提供内置模型列表，请确认当前模型 %s，或使用 /switch <model> 修改。", providerName, cfg.AI.Model))
+			}
+			return *m, nil
+		} else {
+			m.apiKeyReady = false
+			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，但 API Key 未通过校验：%v。可继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置。", providerName, err))
+			return *m, nil
+		}
 	case "/switch":
 		if len(args) == 0 {
 			m.AddMessage("assistant", "用法: /switch <model>")
 			return *m, nil
 		}
-		target := args[0]
-		if !containsModel(m.client.ListModels(), target) {
+		cfg := configs.GlobalAppConfig
+		if cfg == nil {
+			m.AddMessage("assistant", "当前配置未加载，无法切换模型")
+			return *m, nil
+		}
+		target := strings.Join(args, " ")
+		if provider.ProviderSupportsModelCatalog(cfg.AI.Provider) && !provider.IsSupportedModelForConfig(cfg, target) {
 			m.AddMessage("assistant", fmt.Sprintf("模型不可用: %s", target))
 			return *m, nil
 		}
+		cfg.AI.Model = target
+		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+			m.AddMessage("assistant", fmt.Sprintf("切换模型失败: %v", writeErr))
+			return *m, nil
+		}
 		m.activeModel = target
-		m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s", target))
+		if cfg.RuntimeAPIKey() == "" {
+			m.apiKeyReady = false
+			m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s，但当前环境变量 %s 未设置。", target, cfg.APIKeyEnvVarName()))
+			return *m, nil
+		}
+		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
+			m.apiKeyReady = true
+			m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s", target))
+			return *m, nil
+		} else {
+			m.apiKeyReady = false
+			m.AddMessage("assistant", fmt.Sprintf("已切换到模型 %s，但 API Key 未通过校验：%v。", target, err))
+			return *m, nil
+		}
 	case "/models":
 		models := m.client.ListModels()
+		if len(models) == 0 {
+			m.AddMessage("assistant", fmt.Sprintf("当前提供商 %s 不提供内置模型列表，请使用 /switch <model> 手动设置模型。", provider.CurrentProvider()))
+			return *m, nil
+		}
 		list := strings.Join(models, "\n  - ")
 		m.AddMessage("assistant", fmt.Sprintf("可用模型:\n  - %s", list))
 	case "/memory":
@@ -468,12 +593,6 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 		m.messages = nil
-		if m.persona != "" {
-			m.messages = append(m.messages, Message{
-				Role:    "system",
-				Content: m.persona,
-			})
-		}
 		stats, _ := m.client.GetMemoryStats(context.Background())
 		if stats != nil {
 			m.memoryStats = *stats
@@ -490,7 +609,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	case "/explain":
 		if len(args) > 0 {
 			code := strings.Join(args, " ")
-			return *m, m.explainCode(code)
+			return *m, m.sendCodeToAI(code)
 		}
 		return *m, nil
 	default:
@@ -498,6 +617,15 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return *m, nil
+}
+
+func isAPIKeyRecoveryCommand(cmd string) bool {
+	switch cmd {
+	case "/apikey", "/provider", "/help", "/models", "/switch", "/exit", "/quit", "/q":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsModel(models []string, target string) bool {
@@ -533,9 +661,14 @@ func formatTypeStats(byType map[string]int) string {
 }
 
 func (m *Model) buildMessages() []infra.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
 
 	for _, msg := range m.messages {
+		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
 		if msg.Role == "system" {
 			result = append(result, infra.Message{
 				Role:    msg.Role,
@@ -545,6 +678,9 @@ func (m *Model) buildMessages() []infra.Message {
 	}
 
 	for _, msg := range m.messages {
+		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
 		if msg.Role != "system" {
 			result = append(result, infra.Message{
 				Role:    msg.Role,
@@ -557,35 +693,32 @@ func (m *Model) buildMessages() []infra.Message {
 }
 
 func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
+	stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
+	if err != nil {
+		return func() tea.Msg { return StreamErrorMsg{Err: err} }
+	}
+
+	m.streamChan = stream
 	return func() tea.Msg {
-		stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
-		if err != nil {
-			return StreamErrorMsg{Err: err}
+		chunk, ok := <-stream
+		if !ok {
+			return StreamDoneMsg{}
 		}
-
-		for chunk := range stream {
-			m.AppendLastMessage(chunk)
-		}
-
-		return StreamDoneMsg{}
+		return StreamChunkMsg{Content: chunk}
 	}
 }
 
-func (m *Model) submitCode() tea.Cmd {
-	m.waitingCode = false
-	code := strings.Join(m.codeLines, "\n")
-	m.codeLines = nil
-	m.codeDelim = ""
-
-	m.AddMessage("user", fmt.Sprintf("```\n%s\n```", code))
-	m.AddMessage("assistant", "")
-	m.TrimHistory(m.historyTurns)
-	m.generating = true
-
-	return tea.Batch(
-		Chunk(""),
-		m.sendCodeToAI(code),
-	)
+func (m *Model) streamResponseFromChannel() tea.Cmd {
+	if m.streamChan == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		chunk, ok := <-m.streamChan
+		if !ok {
+			return StreamDoneMsg{}
+		}
+		return StreamChunkMsg{Content: chunk}
+	}
 }
 
 func (m *Model) sendCodeToAI(code string) tea.Cmd {
@@ -597,33 +730,6 @@ func (m *Model) sendCodeToAI(code string) tea.Cmd {
 
 	messages := m.buildMessages()
 	return m.streamResponse(messages)
-}
-
-func (m *Model) explainCode(code string) tea.Cmd {
-	m.AddMessage("user", fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code))
-	m.AddMessage("assistant", "")
-	m.TrimHistory(m.historyTurns)
-	m.generating = true
-
-	messages := m.buildMessages()
-	return m.streamResponse(messages)
-}
-
-func isStartDelimiter(s string) bool {
-	s = strings.TrimSpace(s)
-	return s == "'''" || s == `"""` || s == "```"
-}
-
-func isEndDelimiter(line, delim string) bool {
-	return strings.TrimSpace(line) == delim
-}
-
-func getDelimiter(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 3 {
-		return s[:3]
-	}
-	return s
 }
 
 // convertSnakeCaseToCamelCase 将snake_case键转换为camelCase
