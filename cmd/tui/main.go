@@ -319,6 +319,19 @@ func loadDotEnv(path string) error {
 	return nil
 }
 
+func loadPersonaPrompt(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(data))
+}
+
 func setUTF8Mode() {
 	if runtime.GOOS == "windows" {
 		setWindowsUTF8()
