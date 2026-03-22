@@ -179,12 +179,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 
-	case tea.KeyCtrlC:
-		return *m, nil
-
-	case tea.KeyCtrlD:
-		return *m, nil
-
 	case tea.KeyEnter:
 		m.lastKeyWasEnter = true
 		return m.handleNewline()
