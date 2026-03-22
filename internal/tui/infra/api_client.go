@@ -119,13 +119,10 @@ func (c *localChatClient) ClearSessionMemory(ctx context.Context) error {
 
 // ListModels 返回 TUI 可用的模型列表。
 func (c *localChatClient) ListModels() []string {
-	return provider.SupportedModels()
+	return provider.SupportedModelsForConfig(c.config)
 }
 
 // DefaultModel 返回 TUI 使用的默认模型。
 func (c *localChatClient) DefaultModel() string {
-	if c.config != nil && strings.TrimSpace(c.config.AI.Model) != "" {
-		return strings.TrimSpace(c.config.AI.Model)
-	}
-	return provider.DefaultModel()
+	return provider.DefaultModelForConfig(c.config)
 }
