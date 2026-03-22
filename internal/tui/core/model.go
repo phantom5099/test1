@@ -49,6 +49,8 @@ type Model struct {
 	apiKeyReady   bool
 	configPath    string
 
+	streamChan <-chan string
+
 	mu sync.Mutex
 }
 

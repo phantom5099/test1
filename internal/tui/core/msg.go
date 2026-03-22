@@ -66,3 +66,11 @@ func (HideHelpMsg) isMsg() {}
 type RefreshMemoryMsg struct{}
 
 func (RefreshMemoryMsg) isMsg() {}
+
+type streamNextChunk struct {
+	stream <-chan string
+}
+
+func (streamNextChunk) isMsg() {}
+
+var StreamDone = func() tea.Msg { return StreamDoneMsg{} }

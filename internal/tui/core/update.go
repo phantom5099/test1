@@ -38,7 +38,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.generating {
 			m.AppendLastMessage(msg.Content)
 		}
-		return m, nil
+		return m, m.streamResponseFromChannel()
 
 	case StreamDoneMsg:
 		m.mu.Lock()
@@ -677,13 +677,27 @@ func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
 		return func() tea.Msg { return StreamErrorMsg{Err: err} }
 	}
 
-	var cmds []tea.Cmd
-	for chunk := range stream {
-		cmds = append(cmds, Chunk(chunk))
+	m.streamChan = stream
+	return func() tea.Msg {
+		chunk, ok := <-stream
+		if !ok {
+			return StreamDoneMsg{}
+		}
+		return StreamChunkMsg{Content: chunk}
 	}
-	cmds = append(cmds, Done())
+}
 
-	return tea.Sequence(cmds...)
+func (m *Model) streamResponseFromChannel() tea.Cmd {
+	if m.streamChan == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		chunk, ok := <-m.streamChan
+		if !ok {
+			return StreamDoneMsg{}
+		}
+		return StreamChunkMsg{Content: chunk}
+	}
 }
 
 func (m *Model) sendCodeToAI(code string) tea.Cmd {
