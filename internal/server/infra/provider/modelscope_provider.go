@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,20 +108,9 @@ func (p *ChatCompletionProvider) Chat(ctx context.Context, messages []domain.Mes
 		defer resp.Body.Close()
 
 		reader := bufio.NewReader(resp.Body)
-		receivedContent := false
-		receivedDone := false
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				if err == io.EOF {
-					if !receivedDone {
-						if receivedContent {
-							fmt.Println("chat stream ended unexpectedly before completion")
-						}
-					}
-					return
-				}
-				fmt.Println("读取错误:", err)
 				return
 			}
 			line = strings.TrimSpace(line)
@@ -132,19 +122,16 @@ func (p *ChatCompletionProvider) Chat(ctx context.Context, messages []domain.Mes
 				continue
 			}
 			if data == "[DONE]" {
-				receivedDone = true
 				break
 			}
 
 			text, err := decodeStreamContent(data)
 			if err != nil {
-				fmt.Println("JSON 解码错误:", err)
 				return
 			}
 			if text == "" {
 				continue
 			}
-			receivedContent = true
 			select {
 			case <-ctx.Done():
 				return
@@ -164,11 +151,34 @@ func decodeStreamContent(data string) (string, error) {
 	if len(res.Choices) == 0 {
 		return "", nil
 	}
-	return res.Choices[0].Delta.Content, nil
+	content := res.Choices[0].Delta.Content
+	content = stripThinkingTags(content)
+	return content, nil
+}
+
+func stripThinkingTags(content string) string {
+	thinkStart := "<think>"
+	thinkEnd := "</think>"
+	for {
+		start := strings.Index(content, thinkStart)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(content, thinkEnd)
+		if end == -1 {
+			break
+		}
+		end += len(thinkEnd)
+		content = content[:start] + content[end:]
+	}
+	return content
 }
 
 func httpClient() *http.Client {
-	return &http.Client{Timeout: requestTimeout}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	return &http.Client{Timeout: requestTimeout, Transport: tr}
 }
 
 func doRequestWithRetry(ctx context.Context, do func(context.Context) (*http.Response, error)) (*http.Response, error) {
