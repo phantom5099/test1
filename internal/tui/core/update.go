@@ -665,28 +665,17 @@ func (m *Model) buildMessages() []infra.Message {
 	defer m.mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
 
+	// 按照消息的原始时间顺序进行迭代
 	for _, msg := range m.messages {
+		// 跳过空的 assistant 消息
 		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
 			continue
 		}
-		if msg.Role == "system" {
-			result = append(result, infra.Message{
-				Role:    msg.Role,
-				Content: msg.Content,
-			})
-		}
-	}
-
-	for _, msg := range m.messages {
-		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
-		if msg.Role != "system" {
-			result = append(result, infra.Message{
-				Role:    msg.Role,
-				Content: msg.Content,
-			})
-		}
+		// 将非空消息按其原始角色和内容添加到结果中
+		result = append(result, infra.Message{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
 	}
 
 	return result
