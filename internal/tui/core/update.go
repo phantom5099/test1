@@ -38,11 +38,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamDoneMsg:
+		m.mu.Lock()
 		m.generating = false
 		m.FinishLastMessage()
 
 		// 检查最后一条AI消息是否为JSON格式的工具调用
-		if len(m.messages) > 0 {
+		if !m.toolExecuting && len(m.messages) > 0 {
 			lastMsg := &m.messages[len(m.messages)-1]
 			if lastMsg.Role == "assistant" {
 				// 验证是否为JSON
@@ -50,6 +51,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err := json.Unmarshal([]byte(lastMsg.Content), &jsonData); err == nil {
 					// 检查是否包含工具调用字段
 					if toolName, ok := jsonData["tool"].(string); ok && toolName != "" {
+						m.toolExecuting = true
+						m.mu.Unlock()
+
 						// 显示工具执行中提示
 						if toolParams, ok := jsonData["params"].(map[string]interface{}); ok {
 							if filePath, ok := toolParams["filePath"].(string); ok && toolName == "read" {
@@ -79,6 +83,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							case "grep":
 								tool = &tools.GrepTool{}
 							default:
+								m.mu.Lock()
+								m.toolExecuting = false
+								m.mu.Unlock()
 								return ToolErrorMsg{Err: fmt.Errorf("不支持的工具: %s", toolName)}
 							}
 
@@ -86,9 +93,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							var paramsMap map[string]interface{}
 							if paramsRaw, ok := jsonData["params"]; ok {
 								if paramsCasted, ok := paramsRaw.(map[string]interface{}); ok {
-									// 转换参数键从snake_case到camelCase以兼容AI生成的参数
 									paramsMap = convertSnakeCaseToCamelCase(paramsCasted)
 								} else {
+									m.mu.Lock()
+									m.toolExecuting = false
+									m.mu.Unlock()
 									return ToolErrorMsg{Err: fmt.Errorf("工具参数格式错误")}
 								}
 							} else {
@@ -109,6 +118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		m.mu.Unlock()
 
 		return m, nil
 
@@ -137,6 +147,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case ToolResultMsg:
+		m.mu.Lock()
+		m.toolExecuting = false
+		m.mu.Unlock()
 		// 将工具执行结果添加为系统消息，然后重新获取AI响应
 		m.AddMessage("system", fmt.Sprintf("工具执行结果: %s", msg.Result.Output))
 		m.AddMessage("assistant", "")
@@ -147,6 +160,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.streamResponse(messages)
 
 	case ToolErrorMsg:
+		m.mu.Lock()
+		m.toolExecuting = false
+		m.mu.Unlock()
 		// 将工具执行错误添加为系统消息
 		m.AddMessage("system", fmt.Sprintf("工具执行错误: %v", msg.Err))
 		m.AddMessage("assistant", "")
@@ -164,17 +180,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 
 	case tea.KeyCtrlC:
-		if m.waitingCode {
-			m.waitingCode = false
-			m.codeLines = nil
-			m.codeDelim = ""
-		}
 		return *m, nil
 
 	case tea.KeyCtrlD:
-		if m.waitingCode {
-			return *m, m.submitCode()
-		}
 		return *m, nil
 
 	case tea.KeyEnter:
@@ -365,28 +373,13 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.inputBuffer)
 	m.inputBuffer = ""
 
-	if input == "" && !m.waitingCode {
+	if input == "" {
 		return *m, nil
 	}
 
 	switch m.mode {
 	case ModeHelp:
 		m.mode = ModeChat
-		return *m, nil
-	}
-
-	if m.waitingCode {
-		if isEndDelimiter(input, m.codeDelim) {
-			return *m, m.submitCode()
-		}
-		m.codeLines = append(m.codeLines, input)
-		return *m, nil
-	}
-
-	if isStartDelimiter(input) {
-		m.waitingCode = true
-		m.codeDelim = getDelimiter(input)
-		m.codeLines = nil
 		return *m, nil
 	}
 
@@ -490,7 +483,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	case "/explain":
 		if len(args) > 0 {
 			code := strings.Join(args, " ")
-			return *m, m.explainCode(code)
+			return *m, m.sendCodeToAI(code)
 		}
 		return *m, nil
 	default:
@@ -533,6 +526,8 @@ func formatTypeStats(byType map[string]int) string {
 }
 
 func (m *Model) buildMessages() []infra.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
 
 	for _, msg := range m.messages {
@@ -571,23 +566,6 @@ func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
 	}
 }
 
-func (m *Model) submitCode() tea.Cmd {
-	m.waitingCode = false
-	code := strings.Join(m.codeLines, "\n")
-	m.codeLines = nil
-	m.codeDelim = ""
-
-	m.AddMessage("user", fmt.Sprintf("```\n%s\n```", code))
-	m.AddMessage("assistant", "")
-	m.TrimHistory(m.historyTurns)
-	m.generating = true
-
-	return tea.Batch(
-		Chunk(""),
-		m.sendCodeToAI(code),
-	)
-}
-
 func (m *Model) sendCodeToAI(code string) tea.Cmd {
 	prompt := fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code)
 	m.AddMessage("user", prompt)
@@ -597,33 +575,6 @@ func (m *Model) sendCodeToAI(code string) tea.Cmd {
 
 	messages := m.buildMessages()
 	return m.streamResponse(messages)
-}
-
-func (m *Model) explainCode(code string) tea.Cmd {
-	m.AddMessage("user", fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code))
-	m.AddMessage("assistant", "")
-	m.TrimHistory(m.historyTurns)
-	m.generating = true
-
-	messages := m.buildMessages()
-	return m.streamResponse(messages)
-}
-
-func isStartDelimiter(s string) bool {
-	s = strings.TrimSpace(s)
-	return s == "'''" || s == `"""` || s == "```"
-}
-
-func isEndDelimiter(line, delim string) bool {
-	return strings.TrimSpace(line) == delim
-}
-
-func getDelimiter(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 3 {
-		return s[:3]
-	}
-	return s
 }
 
 // convertSnakeCaseToCamelCase 将snake_case键转换为camelCase

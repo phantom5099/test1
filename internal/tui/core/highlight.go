@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type TokenType int
@@ -567,7 +568,7 @@ func tokenizeLine(line string, lang string) []Token {
 }
 
 func runeLen(s string) int {
-	return len([]rune(s))
+	return utf8.RuneCountInString(s)
 }
 
 func hasKeywordByRune(runes []rune, pos int, kw string) bool {
@@ -586,12 +587,22 @@ func hasKeywordByRune(runes []rune, pos int, kw string) bool {
 }
 
 func isIdentChar(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+var operatorChars = map[rune]bool{
+	'+': true, '-': true, '*': true, '/': true, '%': true, '=': true,
+	'<': true, '>': true, '!': true, '&': true, '|': true, '^': true,
+	'~': true, ':': true, ';': true, ',': true, '.': true, '(': true,
+	')': true, '[': true, ']': true, '{': true, '}': true, '?': true,
+	'@': true, '#': true, '$': true,
 }
 
 func isOperator(op string) bool {
-	ops := "+-*/%=<>!&|^~:;,.()[]{}?@#$"
-	return strings.Contains(ops, op)
+	if len(op) == 0 {
+		return false
+	}
+	return operatorChars[rune(op[0])]
 }
 
 func buildKeywordPattern(keywords []string) *regexp.Regexp {

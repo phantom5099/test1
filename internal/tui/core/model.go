@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
@@ -27,10 +28,6 @@ type Model struct {
 	messages     []Message
 	historyTurns int
 
-	codeLines   []string
-	codeDelim   string
-	waitingCode bool
-
 	generating  bool
 	activeModel string
 
@@ -47,6 +44,10 @@ type Model struct {
 	cursorLine    int
 	cursorCol     int
 	multilineMode bool
+
+	toolExecuting bool
+
+	mu sync.Mutex
 }
 
 type Message struct {
@@ -128,6 +129,8 @@ func (m *Model) SetHeight(h int) {
 
 // AddMessage 向聊天历史追加一条带时间戳的消息。
 func (m *Model) AddMessage(role, content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.messages = append(m.messages, Message{
 		Role:      role,
 		Content:   content,
@@ -137,6 +140,8 @@ func (m *Model) AddMessage(role, content string) {
 
 // AppendLastMessage 将流式内容追加到最后一条消息中。
 func (m *Model) AppendLastMessage(content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.messages) > 0 {
 		m.messages[len(m.messages)-1].Content += content
 	}
@@ -144,6 +149,8 @@ func (m *Model) AppendLastMessage(content string) {
 
 // FinishLastMessage 将最后一条消息标记为结束流式输出。
 func (m *Model) FinishLastMessage() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.messages) > 0 {
 		m.messages[len(m.messages)-1].Streaming = false
 	}
@@ -151,6 +158,8 @@ func (m *Model) FinishLastMessage() {
 
 // TrimHistory 在保留系统消息的同时裁剪最近的非系统对话轮次。
 func (m *Model) TrimHistory(maxTurns int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.messages) <= maxTurns*2 {
 		return
 	}
