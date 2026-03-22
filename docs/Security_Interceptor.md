@@ -1,4 +1,4 @@
-# NeoCode 安全拦截器 (Security Interceptor) 模块文档
+# 🛡️ NeoCode 安全拦截器 (Security Interceptor) 模块文档
 
 ## 1. 接口提供与调用规格说明
 
@@ -8,140 +8,93 @@
 
 拦截器会返回以下三种明确的决策动作：
 
-- `ActionDeny` ("deny"): **黑名单拦截**。底层必须拒绝执行，并向大模型返回权限受限的错误信息。
-- `ActionAllow` ("allow"): **白名单放行**。底层可静默执行该操作，无需打断当前 Agent 工作流。
-- `ActionAsk` ("ask"): **黄名单询问**。底层必须挂起当前执行流，通过 TUI 界面向用户弹窗请求授权（Y/N）。
+- `ActionDeny` ("deny"): **拒绝执行**。触发黑名单或安全策略，底层必须停止操作并向模型返回错误。
+- `ActionAllow` ("allow"): **静默放行**。命中白名单，可直接执行无需用户干预。
+- `ActionAsk` ("ask"): **请求确认**。命中黄名单或未匹配任何规则，必须挂起工作流并请求用户授权。
 
-### 1.2 对外暴露接口 (`Check`)
+### 1.2 对外暴露接口 (`SecurityService`)
 
 ```Go
-// Check 方法签发权限批文
-func (sm *SecurityManager) Check(toolType string, target string) Action
+// SecurityService 接口定义
+type SecurityService interface {
+	Check(toolType string, target string) domain.Action
+}
 ```
 
 **参数规范：**
 
 - `toolType` (string): 必须为以下四种标准工具类型之一：
-  - `"Read"`: 读取本地文件内容。
-  - `"Write"`: 覆盖或修改本地文件。
-  - `"Bash"`: 执行 Shell 终端命令。
+  - `"Read"`: 读取本地文件。
+  - `"Write"`: 写入或修改文件。
+  - `"Bash"`: 执行 Shell 命令。
   - `"WebFetch"`: 发起外部网络请求。
-- `target` (string): 操作的目标载体。
-  - 对于 Read/Write：传入相对或绝对文件路径（如 `src/main.go`）。
-  - 对于 Bash：传入完整的命令字符串（如 `rm -rf /`）。
-  - 对于 WebFetch：传入目标域名或 URL（如 `github.com`）。
+- `target` (string): 操作的目标（路径、命令或域名）。
 
-**Agent 侧调用示例：**
+---
 
-```Go
-// 假设已在系统启动时初始化了 securityManager
-action := securityManager.Check("Bash", "rm -rf /")
-
-switch action {
-case security.ActionDeny:
-    return "Error: 触发系统安全黑名单，请求被拦截。"
-case security.ActionAsk:
-    // 触发 TUI 弹窗询问逻辑
-    if !tui.Confirm("AI 试图执行删库命令，是否允许？") {
-        return "Error: 用户拒绝执行。"
-    }
-    fallthrough
-case security.ActionAllow:
-    // 执行实际的 bash 命令
-    return executeCommand("rm -rf /")
-}
-```
-
-------
-
-## 2. 模块概述与目录情况
+## 2. 模块架构与目录结构
 
 ### 2.1 架构概述
 
-本模块采用**“三态漏斗模型”**与**“职责分离”**的设计理念。通过解析外部的 YAML 配置文件，将安全策略映射至内存，实现高吞吐量的内存级正则校验。配置分为黑、白、黄三个独立名单，彻底解耦安全规则与业务逻辑。
+本模块采用**“防御性路径预处理”**与**“三态漏斗过滤”**架构。在匹配规则前，先通过规范化引擎消除路径绕过风险，随后依次通过黑、白、黄名单进行判决。
 
-### 2.2 目录结构
-
-```Plaintext
-NeoCode/
-├── security/                   # [外部配置层] 供用户自定义的安全规则文件
-│   ├── blacklist.yaml          # 绝对禁区规则
-│   ├── whitelist.yaml          # 信任放行规则
-│   └── yellowlist.yaml         # 需人工确认规则
-├── internal/
-│   ├── pkg/
-│       ├── security/           # [核心逻辑层] 拦截器引擎大本营
-│           ├── config.go       # YAML 解析与数据结构定义
-│           ├── checker.go      # 漏斗判决引擎与双核匹配逻辑
-│           ├── checker_test.go # 表格驱动的自动化单元测试
-```
-
-------
-
-## 3. 测试用例与运行结果
-
-本模块采用 Go 原生的表格驱动测试（Table-Driven Tests）保证引擎的可靠性，覆盖了正向匹配、越权阻断、降级兜底等核心场景。
-
-### 3.1 核心测试数据 (Mock Data)
-
-```Go
-BlackList: { Target: ".git/**", R: "deny", W: "deny" }, { Command: "rm -rf *", X: "deny" }
-WhiteList: { Target: "src/*.go", R: "allow" }, { Command: "go version", X: "allow" }
-YellowList: { Target: "src/*.go", W: "ask" }, { Command: "go build *", X: "ask" }
-```
-
-### 3.2 自动化测试结果
-
-在 `internal/pkg/security/` 目录下执行 `go test -v` 的运行报告：
+### 2.2 目录结构 (test1 项目)
 
 ```Plaintext
-=== RUN   TestSecurityManager_Check
-=== RUN   TestSecurityManager_Check/试图读取git源码 (Target: ".git/config")
-=== RUN   TestSecurityManager_Check/试图执行删库跑路 (Command: "rm -rf /")
-=== RUN   TestSecurityManager_Check/正常读取业务代码 (Target: "src/main.go")
-=== RUN   TestSecurityManager_Check/执行安全的诊断命令 (Command: "go version")
-=== RUN   TestSecurityManager_Check/试图修改业务代码 (Target: "src/main.go")
-=== RUN   TestSecurityManager_Check/执行耗时的编译命令 (Command: "go build main.go")
-=== RUN   TestSecurityManager_Check/未知的网络请求 (兜底策略测试)
-=== RUN   TestSecurityManager_Check/未知的高危命令 (兜底策略测试)
---- PASS: TestSecurityManager_Check (0.00s)
-    --- PASS: TestSecurityManager_Check/试图读取git源码 (0.00s)
-    --- PASS: TestSecurityManager_Check/试图执行删库跑路 (0.00s)
-    --- PASS: TestSecurityManager_Check/正常读取业务代码 (0.00s)
-    --- PASS: TestSecurityManager_Check/执行安全的诊断命令 (0.00s)
-    --- PASS: TestSecurityManager_Check/试图修改业务代码 (0.00s)
-    --- PASS: TestSecurityManager_Check/执行耗时的编译命令 (0.00s)
-    --- PASS: TestSecurityManager_Check/未知的网络请求 (0.00s)
-    --- PASS: TestSecurityManager_Check/未知的高危命令 (0.00s)
-PASS
-ok      NeoCode/internal/pkg/security   0.003s
+test1/
+├── configs/security/           # [配置层] YAML 规则文件
+│   ├── blacklist.yaml          # 绝对禁区 (Deny)
+│   ├── whitelist.yaml          # 信任区域 (Allow)
+│   └── yellowlist.yaml         # 需确认区域 (Ask)
+├── internal/server/
+│   ├── domain/
+│   │   └── security.go         # 核心接口与数据结构定义
+│   ├── service/
+│   │   ├── security_service.go # 拦截引擎实现 (包含清洗与匹配逻辑)
+│   │   └── security_service_test.go # 90.6% 覆盖率的自动化测试
 ```
 
-------
+---
 
-## 4. 具体实现逻辑
+## 3. 核心安全防御机制 (Security Hardening)
 
-### 4.1 优先级漏斗判决 (Funnel Priority)
+模块在规则匹配前引入了主动防御逻辑，专门应对**对抗性输入 (Adversarial Inputs)**。
 
-`Check` 方法严格按照以下优先级链向下路由：
+### 3.1 路径规范化 (Normalization)
+针对 `Read` 和 `Write` 操作，系统会自动执行：
+- **`filepath.Clean`**: 消除 `./`、多余斜杠以及 `../` 回溯符。将 `src/../.git/config` 强行转化为 `.git/config`。
+- **`filepath.ToSlash`**: 将 Windows 的 `\` 统一为 `/`，防止利用平台差异逃逸。
 
-1. **最高级 (Blacklist)**：一旦命中黑名单，强制返回 `deny`。
-2. **第二级 (Whitelist)**：黑名单未命中，且命中白名单，返回 `allow`。
-3. **第三级 (Yellowlist)**：前两者均未命中，且命中黄名单，返回 `ask`。
-4. **默认兜底 (Fallback)**：所有名单均未命中时，采用**“默认拒绝，显式放行”**的零信任原则，强制降级返回 `ask`，交由人类决策。
+### 3.2 跨域主动拦截
+- **边界防御**: 若清洗后的路径以 `..` 开头（意图跳出当前项目工作目录），拦截器会跳过所有名单逻辑，**直接返回 `ActionDeny`**。
 
-### 4.2 避免规则短路 (Anti-Shadowing)
+---
 
-引擎在遍历规则列表时，不仅校验 `Target/Command` 是否正则匹配，还会校验该规则是否实际挂载了请求对应的权限动作（R/W/X/N）。若路径匹配但权限字段为空，引擎将跳过该规则继续向下遍历，防止高危请求意外穿透至下层名单。
+## 4. 自动化测试与质量保证
 
-### 4.3 双核匹配引擎 (Dual-Core Matcher)
+本模块通过了严苛的自动化测试，核心逻辑（`security_service.go`）的 **测试覆盖率达到 90.6%**。
 
-为了解决路径操作与纯文本命令在通配符语义（Globbing Semantics）上的领域冲突，`isMatch` 内部采用了双引擎分流降级策略：
+### 4.1 测试场景覆盖
+- **基础匹配**: 黑名单命中、白名单放行、黄名单询问。
+- **对抗性绕过**: 模拟路径穿越（Traversal）、冗余斜杠、跨目录攻击。
+- **通配符深度**: 验证 `**/*.go` 对多级目录的递归匹配。
+- **网络域名**: 验证对 `*.domain.com` 子域名的通配支持。
 
-- **核心一：跨层级文件引擎 (doublestar)**
-  - 针对 `Read` / `Write` 工具。
-  - 引入 `github.com/bmatcuk/doublestar` 处理文件系统语义，严格遵循 `/` 为目录分隔符的规则，完美支持 `**` 跨级目录匹配。
-- **核心二：纯文本正则引擎 (regexp)**
-  - 针对 `Bash` / `WebFetch` 工具。
-  - 由于 Shell 命令中 `/` 不具备目录边界意义（如 `rm -rf /`），工具将其视为纯文本。
-  - 通过 `regexp.QuoteMeta` 自动转义输入中的特殊符号防止正则注入，随后将用户配置的 `*` 和 `**` 安全地替换为正则的 `.*`，实现无视 `/` 的万能通配拦截。
+### 4.2 运行测试
+```bash
+go test -v internal/server/service/security_service.go internal/server/service/security_service_test.go
+```
+
+---
+
+## 5. 具体实现原理
+
+### 5.1 优先级漏斗判决 (Funnel Priority)
+1. **最高级 (Hard-Deny)**: 路径跨域或命中黑名单规则。
+2. **第二级 (Allow)**: 命中白名单规则。
+3. **第三级 (Ask)**: 命中黄名单规则。
+4. **兜底 (Default)**: 未匹配任何规则，降级为 `ActionAsk`（零信任原则）。
+
+### 5.2 匹配引擎双重分流
+- **文件系统语义 (doublestar)**: 处理 `Read/Write`，支持真正的 `**` 跨目录匹配。
+- **纯文本正则语义 (regexp)**: 处理 `Bash/WebFetch`，通过 `regexp.QuoteMeta` 防止正则注入，并将 `*` 安全映射为命令通配符。
