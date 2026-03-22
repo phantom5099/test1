@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go-llm-demo/configs"
 	"go-llm-demo/internal/server/domain"
+	"go-llm-demo/internal/server/infra/provider"
 	"go-llm-demo/internal/server/infra/tools"
 	"go-llm-demo/internal/tui/infra"
 
@@ -380,6 +383,10 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(input, "/") {
 		return m.handleCommand(input)
 	}
+	if !m.apiKeyReady {
+		m.AddMessage("assistant", "当前 API Key 未通过校验，请使用 /apikey <env_name> 切换变量名，或 /exit 退出。")
+		return *m, nil
+	}
 
 	m.AddMessage("user", input)
 	m.AddMessage("assistant", "")
@@ -402,12 +409,53 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 
 	cmd := fields[0]
 	args := fields[1:]
+	if !m.apiKeyReady && !isAPIKeyRecoveryCommand(cmd) {
+		m.AddMessage("assistant", "当前 API Key 未通过校验，仅支持 /apikey <env_name>、/help、/models、/switch <model> 或 /exit。")
+		return *m, nil
+	}
 
 	switch cmd {
 	case "/help":
 		m.mode = ModeHelp
 	case "/exit", "/quit", "/q":
 		return *m, tea.Quit
+	case "/apikey":
+		if len(args) == 0 {
+			m.AddMessage("assistant", "用法: /apikey <env_name>")
+			return *m, nil
+		}
+		cfg := configs.GlobalAppConfig
+		if cfg == nil {
+			m.AddMessage("assistant", "当前配置未加载，无法切换 API Key 环境变量名")
+			return *m, nil
+		}
+		previousEnvName := cfg.AI.APIKey
+		cfg.AI.APIKey = strings.TrimSpace(args[0])
+		envName := cfg.APIKeyEnvVarName()
+		if cfg.RuntimeAPIKey() == "" {
+			m.apiKeyReady = false
+			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 未设置。请继续使用 /apikey <env_name> 切换，或 /exit 退出。", envName))
+			return *m, nil
+		}
+		err := provider.ValidateChatAPIKey(context.Background(), cfg)
+		if err == nil {
+			if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+				cfg.AI.APIKey = previousEnvName
+				m.apiKeyReady = configs.RuntimeAPIKey() != ""
+				m.AddMessage("assistant", fmt.Sprintf("切换 API Key 环境变量名失败: %v", writeErr))
+				return *m, nil
+			}
+			m.apiKeyReady = true
+			m.AddMessage("assistant", fmt.Sprintf("已切换 API Key 环境变量名为 %s，并通过校验。", envName))
+			return *m, nil
+		}
+		m.apiKeyReady = false
+		if errors.Is(err, provider.ErrInvalidAPIKey) {
+			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 中的 API Key 无效：%v。请继续使用 /apikey <env_name> 切换，或 /exit 退出。", envName, err))
+			return *m, nil
+		}
+		m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 的 API Key 未通过校验：%v。请继续使用 /apikey <env_name> 切换，或 /exit 退出。", envName, err))
+		return *m, nil
 	case "/switch":
 		if len(args) == 0 {
 			m.AddMessage("assistant", "用法: /switch <model>")
@@ -485,6 +533,15 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return *m, nil
+}
+
+func isAPIKeyRecoveryCommand(cmd string) bool {
+	switch cmd {
+	case "/apikey", "/help", "/models", "/switch", "/exit", "/quit", "/q":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsModel(models []string, target string) bool {
