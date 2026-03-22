@@ -111,14 +111,6 @@ func (p *ChatCompletionProvider) Chat(ctx context.Context, messages []domain.Mes
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				if err == io.EOF {
-					if !receivedDone {
-						if receivedContent {
-							fmt.Println("chat stream ended unexpectedly before completion")
-						}
-					}
-					return
-				}
 				return
 			}
 			line = strings.TrimSpace(line)
