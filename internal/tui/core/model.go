@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Mode 表示 TUI 当前所处的主交互模式。
 type Mode int
 
 const (
@@ -24,6 +25,7 @@ const (
 	ModeMemory
 )
 
+// Model 保存 Bubble Tea 运行所需的全部界面状态。
 type Model struct {
 	width   int
 	height  int
@@ -58,6 +60,7 @@ type Model struct {
 	mu *sync.Mutex
 }
 
+// Message 是 TUI 内部使用的聊天消息表示。
 type Message struct {
 	Role      string
 	Content   string
@@ -76,6 +79,7 @@ func NewModel(client infra.ChatClient, persona string, historyTurns int, configP
 		historyTurns = 6
 	}
 
+	// 输入框和视口在初始化阶段统一配置，后续 Update/View 只处理状态变化。
 	input := textarea.New()
 	focusedStyle, blurredStyle := textarea.DefaultStyles()
 	focusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#61AFEF"))
@@ -182,6 +186,7 @@ func (m *Model) TrimHistory(maxTurns int) {
 		return
 	}
 
+	// 系统消息承载 persona、工具上下文等结构化信息，不参与普通轮次裁剪。
 	var system []Message
 	var others []Message
 

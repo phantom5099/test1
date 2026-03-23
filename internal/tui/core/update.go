@@ -73,7 +73,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		mu.Unlock()
 
-		// 检查最后一条AI消息是否为JSON格式的工具调用
+		// 当前工具调用协议约定为 assistant 直接输出一段 JSON，UI 在流结束后再解析并执行。
 		if shouldCheckToolCall {
 			var jsonData map[string]interface{}
 			if err := json.Unmarshal([]byte(lastContent), &jsonData); err == nil {
@@ -92,10 +92,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						paramsMap = tools.NormalizeParams(toolParams)
 					}
 
-					// 显示工具执行中提示（仅用于 UI，不参与模型上下文）
+					// 这类状态消息只给用户看，不应该再次喂给模型，避免污染后续上下文。
 					m.AddMessage("system", formatToolStatusMessage(toolName, paramsMap))
 
-					// 在goroutine中执行工具调用
+					// 工具执行放在异步命令中，避免阻塞 Bubble Tea 主循环。
 					return m, func() tea.Msg {
 						call := domain.ToolCall{Tool: toolName, Params: paramsMap}
 						result := tools.GlobalRegistry.Execute(call)
@@ -163,13 +163,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mu.Lock()
 		m.toolExecuting = false
 		mu.Unlock()
-		// 将结构化工具上下文添加为系统消息，然后重新获取AI响应
+		// 工具结果会回灌成结构化 system message，供模型基于真实执行结果继续推理。
 		m.AddMessage("system", formatToolContextMessage(msg.Result))
 		m.AddMessage("assistant", "")
 		m.generating = true
 		m.refreshViewport()
 
-		// 构建包含工具结果的消息并重新请求AI
+		// 重新构建消息时会自动过滤瞬时状态，只保留必要的工具上下文。
 		messages := m.buildMessages()
 		return m, m.streamResponse(messages)
 
@@ -178,7 +178,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mu.Lock()
 		m.toolExecuting = false
 		mu.Unlock()
-		// 将工具执行错误添加为结构化系统上下文
+		// 错误也按相同格式回灌，便于模型解释失败原因或给出补救动作。
 		m.AddMessage("system", formatToolErrorContext(msg.Err))
 		m.AddMessage("assistant", "")
 		m.generating = true
@@ -485,6 +485,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 }
 
 func isAPIKeyRecoveryCommand(cmd string) bool {
+	// API Key 未就绪时，仅保留恢复配置所需的最小命令集。
 	switch cmd {
 	case "/apikey", "/provider", "/help", "/switch", "/pwd", "/workspace", "/exit", "/quit", "/q":
 		return true
@@ -530,6 +531,7 @@ func (m *Model) buildMessages() []infra.Message {
 	mu.Lock()
 	defer mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
+	// 仅保留最近几次工具回灌，既让模型知道最新执行结果，也避免上下文被历史输出挤爆。
 	keepToolContextIndex := recentToolContextIndexes(m.messages, maxToolContextMessages)
 
 	// 按照消息的原始时间顺序进行迭代
@@ -557,6 +559,7 @@ func (m *Model) buildMessages() []infra.Message {
 }
 
 func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
+	// 每次请求都会替换当前 streamChan，后续 chunk 统一从该通道继续拉取。
 	stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
 	if err != nil {
 		return func() tea.Msg { return StreamErrorMsg{Err: err} }
@@ -637,6 +640,7 @@ func formatToolContextMessage(result *tools.ToolResult) string {
 		return toolContextPrefix + "\n" + "tool=unknown\n" + "success=false\n" + "error:\n工具返回为空"
 	}
 
+	// 使用稳定的文本格式而不是自然语言描述，方便模型可靠解析执行反馈。
 	builder := strings.Builder{}
 	builder.WriteString(toolContextPrefix)
 	builder.WriteString("\n")
@@ -684,6 +688,7 @@ func truncateForContext(text string, maxLen int) string {
 	if maxLen <= 0 || len(trimmed) <= maxLen {
 		return trimmed
 	}
+	// 截断时保留总长度提示，帮助模型判断输出是否被裁剪以及是否需要再次读取。
 	suffix := fmt.Sprintf("\n... (truncated, total=%d chars)", len(trimmed))
 	keep := maxLen - len(suffix)
 	if keep < 0 {
@@ -710,6 +715,7 @@ func runCodeCmd(code string) tea.Cmd {
 		}
 		tmpFile.Close()
 
+		// 对需要解释器的语言直接调用对应 runner；Go 默认使用 go run 保持开发体验一致。
 		var cmd *exec.Cmd
 		if runner != "" {
 			cmd = exec.Command(runner, tmpFile.Name())
@@ -731,6 +737,7 @@ func runCodeCmd(code string) tea.Cmd {
 func detectLanguage(code string) (string, string) {
 	code = strings.TrimSpace(code)
 
+	// 这里只做轻量启发式识别，目标是支持 /run 的快速实验而不是完整语法检测。
 	if strings.HasPrefix(code, "#!/bin/bash") || strings.HasPrefix(code, "#!/bin/sh") {
 		return "sh", "bash"
 	}

@@ -14,6 +14,7 @@ import (
 
 type Message = domain.Message
 
+// ChatClient 定义 TUI 侧依赖的最小聊天与记忆接口。
 type ChatClient interface {
 	Chat(ctx context.Context, messages []Message, model string) (<-chan string, error)
 	GetMemoryStats(ctx context.Context) (*MemoryStats, error)
@@ -22,6 +23,7 @@ type ChatClient interface {
 	DefaultModel() string
 }
 
+// MemoryStats 是 TUI 展示 memory 面板所需的聚合统计信息。
 type MemoryStats struct {
 	PersistentItems int
 	SessionItems    int
@@ -71,6 +73,7 @@ func NewLocalChatClient() (ChatClient, error) {
 	roleRepo := repository.NewFileRoleStore("./data/roles.json")
 	roleSvc := service.NewRoleService(roleRepo, strings.TrimSpace(cfg.Persona.FilePath))
 
+	// 当前仍以内进程方式组装服务，后续替换为真实 transport 时可继续复用该接口。
 	return &localChatClient{roleSvc: roleSvc, memorySvc: memorySvc, workingSvc: workingSvc, config: cfg}, nil
 }
 
