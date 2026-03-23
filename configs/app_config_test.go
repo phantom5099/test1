@@ -61,15 +61,13 @@ func TestAppConfigurationValidateBaseAllowsMissingAIKey(t *testing.T) {
 	}
 }
 
-func TestAppConfigurationValidateBaseAllowsNonModelScopeWithoutCatalog(t *testing.T) {
+func TestAppConfigurationValidateBaseAllowsProviderWithoutLegacyCatalog(t *testing.T) {
 	cfg := validConfig()
 	cfg.AI.Provider = "deepseek"
 	cfg.AI.Model = "deepseek-chat"
-	cfg.Models.Chat.DefaultModel = ""
-	cfg.Models.Chat.Models = nil
 
 	if err := cfg.ValidateBase(); err != nil {
-		t.Fatalf("expected non-modelscope config without catalog to validate, got: %v", err)
+		t.Fatalf("expected provider config without legacy catalog to validate, got: %v", err)
 	}
 }
 
@@ -91,9 +89,9 @@ func TestLoadAppConfig(t *testing.T) {
   name: "NeoCode"
   version: "1.0.0"
 ai:
-  provider: "modelscope"
+  provider: "openll"
   api_key: "CUSTOM_CHAT_KEY"
-  model: "chat-model"
+  model: "gpt-5.4"
 memory:
   top_k: 5
   min_match_score: 2.2
@@ -104,12 +102,6 @@ history:
   short_term_turns: 6
 persona:
   file_path: "./configs/persona.txt"
-models:
-  chat:
-    default_model: "chat-model"
-    models:
-      - name: "chat-model"
-        url: "https://chat.example"
 `)
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -120,7 +112,7 @@ models:
 		t.Fatalf("load config: %v", err)
 	}
 
-	if GlobalAppConfig == nil || GlobalAppConfig.AI.Model != "chat-model" {
+	if GlobalAppConfig == nil || GlobalAppConfig.AI.Model != "gpt-5.4" {
 		t.Fatalf("expected loaded config, got %+v", GlobalAppConfig)
 	}
 	if GlobalAppConfig.AI.APIKey != "CUSTOM_CHAT_KEY" {
@@ -163,21 +155,6 @@ func TestEnsureConfigFileCreatesDefault(t *testing.T) {
 	}
 }
 
-func TestGetChatModelURLFromConfig(t *testing.T) {
-	cfg := validConfig()
-	url, ok := GetChatModelURLFromConfig(cfg, "chat-model")
-	if !ok {
-		t.Fatal("expected model lookup to succeed")
-	}
-	if url != "https://chat.example" {
-		t.Fatalf("expected chat model url, got %q", url)
-	}
-
-	if _, ok := GetChatModelURLFromConfig(cfg, "missing-model"); ok {
-		t.Fatal("expected missing model lookup to fail")
-	}
-}
-
 func TestWriteAppConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -204,9 +181,9 @@ func TestWriteAppConfigRoundTrip(t *testing.T) {
 
 func validConfig() *AppConfiguration {
 	cfg := &AppConfiguration{}
-	cfg.AI.Provider = "modelscope"
+	cfg.AI.Provider = "openll"
 	cfg.AI.APIKey = DefaultAPIKeyEnvVar
-	cfg.AI.Model = "chat-model"
+	cfg.AI.Model = "gpt-5.4"
 	cfg.Memory.TopK = 5
 	cfg.Memory.MinMatchScore = 2.2
 	cfg.Memory.MaxPromptChars = 1800
@@ -215,8 +192,6 @@ func validConfig() *AppConfiguration {
 	cfg.Memory.PersistTypes = []string{"user_preference", "project_rule", "code_fact", "fix_recipe"}
 	cfg.History.ShortTermTurns = 6
 	cfg.Persona.FilePath = DefaultPersonaFilePath
-	cfg.Models.Chat.DefaultModel = "chat-model"
-	cfg.Models.Chat.Models = []ModelDetail{{Name: "chat-model", URL: "https://chat.example"}}
 	return cfg
 }
 

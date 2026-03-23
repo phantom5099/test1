@@ -10,18 +10,18 @@ import (
 const modelScopeProviderName = "modelscope"
 
 type ProviderSpec struct {
-	Name            string
-	BaseURL         string
-	HasModelCatalog bool
+	Name         string
+	BaseURL      string
+	DefaultModel string
 }
 
 var providerSpecs = []ProviderSpec{
-	{Name: modelScopeProviderName, BaseURL: "", HasModelCatalog: true},
-	{Name: "deepseek", BaseURL: "https://api.deepseek.com/chat/completions", HasModelCatalog: false},
-	{Name: "openll", BaseURL: "https://www.openll.top/v1/chat/completions", HasModelCatalog: false},
-	{Name: "siliconflow", BaseURL: "https://api.siliconflow.cn/v1/chat/completions", HasModelCatalog: false},
-	{Name: "豆包大模型", BaseURL: "https://ark.cn-beijing.volces.com/api/v3/chat/completions", HasModelCatalog: false},
-	{Name: "openai", BaseURL: "https://api.openai.com/v1/chat/completions", HasModelCatalog: false},
+	{Name: modelScopeProviderName, BaseURL: "https://api-inference.modelscope.cn/v1/chat/completions", DefaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct"},
+	{Name: "deepseek", BaseURL: "https://api.deepseek.com/chat/completions", DefaultModel: "deepseek-chat"},
+	{Name: "openll", BaseURL: "https://www.openll.top/v1/chat/completions", DefaultModel: "gpt-5.4"},
+	{Name: "siliconflow", BaseURL: "https://api.siliconflow.cn/v1/chat/completions", DefaultModel: "zai-org/GLM-4.6"},
+	{Name: "豆包大模型", BaseURL: "https://ark.cn-beijing.volces.com/api/v3/chat/completions", DefaultModel: "doubao-pro-v1"},
+	{Name: "openai", BaseURL: "https://api.openai.com/v1/chat/completions", DefaultModel: "gpt-5.4"},
 }
 
 var providerIndex = func() map[string]ProviderSpec {
@@ -52,38 +52,6 @@ func SupportedProviders() []string {
 	return providers
 }
 
-func ProviderSupportsModelCatalog(name string) bool {
-	spec, ok := providerSpecByName(name)
-	return ok && spec.HasModelCatalog
-}
-
-func SupportedModels() []string {
-	return SupportedModelsForConfig(configs.GlobalAppConfig)
-}
-
-func SupportedModelsForConfig(cfg *configs.AppConfiguration) []string {
-	providerName := providerNameFromConfig(cfg)
-	if !ProviderSupportsModelCatalog(providerName) {
-		return nil
-	}
-
-	if cfg != nil && len(cfg.Models.Chat.Models) > 0 {
-		models := make([]string, 0, len(cfg.Models.Chat.Models))
-		for _, model := range cfg.Models.Chat.Models {
-			if strings.TrimSpace(model.Name) != "" {
-				models = append(models, model.Name)
-			}
-		}
-		if len(models) > 0 {
-			return models
-		}
-	}
-
-	models := make([]string, len(fallbackSupportedModels))
-	copy(models, fallbackSupportedModels)
-	return models
-}
-
 func DefaultModel() string {
 	return DefaultModelForConfig(configs.GlobalAppConfig)
 }
@@ -92,42 +60,21 @@ func DefaultModelForConfig(cfg *configs.AppConfiguration) string {
 	providerName := providerNameFromConfig(cfg)
 	if cfg != nil {
 		if model := strings.TrimSpace(cfg.AI.Model); model != "" {
-			if !ProviderSupportsModelCatalog(providerName) || IsSupportedModelForConfig(cfg, model) {
-				return model
-			}
-		}
-		if ProviderSupportsModelCatalog(providerName) {
-			if model := strings.TrimSpace(cfg.Models.Chat.DefaultModel); model != "" {
-				return model
-			}
+			return model
 		}
 	}
-
-	supported := SupportedModelsForConfig(cfg)
-	if len(supported) > 0 {
-		return supported[0]
+	if spec, ok := providerSpecByName(providerName); ok {
+		return strings.TrimSpace(spec.DefaultModel)
 	}
 	return ""
 }
 
-func IsSupportedModel(model string) bool {
-	return IsSupportedModelForConfig(configs.GlobalAppConfig, model)
-}
-
-func IsSupportedModelForConfig(cfg *configs.AppConfiguration, model string) bool {
-	target := strings.TrimSpace(model)
-	if target == "" {
-		return false
+func DefaultModelForProvider(name string) string {
+	spec, ok := providerSpecByName(name)
+	if !ok {
+		return ""
 	}
-	if !ProviderSupportsModelCatalog(providerNameFromConfig(cfg)) {
-		return true
-	}
-	for _, m := range SupportedModelsForConfig(cfg) {
-		if m == target {
-			return true
-		}
-	}
-	return false
+	return strings.TrimSpace(spec.DefaultModel)
 }
 
 func CurrentProvider() string {
@@ -135,15 +82,8 @@ func CurrentProvider() string {
 }
 
 func ResolveChatEndpoint(cfg *configs.AppConfiguration, model string) (string, error) {
+	_ = model
 	providerName := providerNameFromConfig(cfg)
-	if ProviderSupportsModelCatalog(providerName) {
-		baseURL, ok := configs.GetChatModelURLFromConfig(cfg, model)
-		if !ok || strings.TrimSpace(baseURL) == "" {
-			return "", fmt.Errorf("chat model URL is not configured for %q", model)
-		}
-		return baseURL, nil
-	}
-
 	spec, ok := providerSpecByName(providerName)
 	if !ok {
 		return "", fmt.Errorf("unsupported ai.provider: %s", providerName)
