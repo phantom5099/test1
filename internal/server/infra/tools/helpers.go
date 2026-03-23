@@ -186,7 +186,7 @@ func resolveWorkspacePath(path string) (string, error) {
 func ensureWorkspacePath(path string) (string, *ToolResult) {
 	resolved, err := resolveWorkspacePath(path)
 	if err != nil {
-		return "", &ToolResult{Success: false, Error: fmt.Sprintf("无效路径: %v", err)}
+		return "", &ToolResult{Success: false, Error: err.Error()}
 	}
 	return resolved, nil
 }

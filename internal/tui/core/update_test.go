@@ -27,10 +27,6 @@ func (fakeChatClient) ClearSessionMemory(context.Context) error {
 	return nil
 }
 
-func (fakeChatClient) ListModels() []string {
-	return nil
-}
-
 func (fakeChatClient) DefaultModel() string {
 	return "test-model"
 }

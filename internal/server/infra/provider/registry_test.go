@@ -32,14 +32,20 @@ func TestNormalizeProviderName(t *testing.T) {
 	}
 }
 
-func TestSupportedModelsForConfigNonCatalogProvider(t *testing.T) {
-	cfg := configs.DefaultAppConfig()
-	cfg.AI.Provider = "deepseek"
-	cfg.AI.Model = "deepseek-chat"
+func TestDefaultModelForProvider(t *testing.T) {
+	tests := map[string]string{
+		"modelscope":  "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+		"deepseek":    "deepseek-chat",
+		"openll":      "gpt-5.4",
+		"siliconflow": "zai-org/GLM-4.6",
+		"豆包大模型":       "doubao-pro-v1",
+		"openai":      "gpt-5.4",
+	}
 
-	models := SupportedModelsForConfig(cfg)
-	if len(models) != 0 {
-		t.Fatalf("expected no built-in model list, got %v", models)
+	for providerName, want := range tests {
+		if got := DefaultModelForProvider(providerName); got != want {
+			t.Fatalf("expected default model %q for provider %q, got %q", want, providerName, got)
+		}
 	}
 }
 
@@ -55,7 +61,7 @@ func TestResolveChatEndpoint(t *testing.T) {
 	}
 
 	cfg.AI.Provider = "openai"
-	cfg.AI.Model = "gpt-4o-mini"
+	cfg.AI.Model = "gpt-5.4"
 	url, err = ResolveChatEndpoint(cfg, cfg.AI.Model)
 	if err != nil {
 		t.Fatalf("expected openai endpoint, got error: %v", err)
@@ -65,7 +71,7 @@ func TestResolveChatEndpoint(t *testing.T) {
 	}
 
 	cfg.AI.Provider = "openll"
-	cfg.AI.Model = "gpt-4o-mini"
+	cfg.AI.Model = "gpt-5.4"
 	url, err = ResolveChatEndpoint(cfg, cfg.AI.Model)
 	if err != nil {
 		t.Fatalf("expected openll endpoint, got error: %v", err)

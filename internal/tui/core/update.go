@@ -299,7 +299,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	cmd := fields[0]
 	args := fields[1:]
 	if !m.apiKeyReady && !isAPIKeyRecoveryCommand(cmd) {
-		m.AddMessage("assistant", "当前 API Key 未通过校验，仅支持 /apikey <env_name>、/provider <name>、/help、/models、/switch <model>、/pwd（/workspace）或 /exit。")
+		m.AddMessage("assistant", "当前 API Key 未通过校验，仅支持 /apikey <env_name>、/provider <name>、/help、/switch <model>、/pwd（/workspace）或 /exit。")
 		return *m, nil
 	}
 
@@ -361,9 +361,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 		cfg.AI.Provider = providerName
-		if provider.ProviderSupportsModelCatalog(providerName) && !provider.IsSupportedModelForConfig(cfg, cfg.AI.Model) {
-			cfg.AI.Model = provider.DefaultModelForConfig(cfg)
-		}
+		cfg.AI.Model = provider.DefaultModelForProvider(providerName)
 		m.activeModel = cfg.AI.Model
 		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
 			m.AddMessage("assistant", fmt.Sprintf("切换提供商失败: %v", writeErr))
@@ -376,11 +374,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
 			m.apiKeyReady = true
-			if provider.ProviderSupportsModelCatalog(providerName) {
-				m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，当前模型: %s。", providerName, cfg.AI.Model))
-			} else {
-				m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s。该提供商不提供内置模型列表，请确认当前模型 %s，或使用 /switch <model> 修改。", providerName, cfg.AI.Model))
-			}
+			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，当前模型已重置为默认值: %s。", providerName, cfg.AI.Model))
 			return *m, nil
 		} else {
 			m.apiKeyReady = false
@@ -398,10 +392,6 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 		target := strings.Join(args, " ")
-		if provider.ProviderSupportsModelCatalog(cfg.AI.Provider) && !provider.IsSupportedModelForConfig(cfg, target) {
-			m.AddMessage("assistant", fmt.Sprintf("模型不可用: %s", target))
-			return *m, nil
-		}
 		cfg.AI.Model = target
 		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
 			m.AddMessage("assistant", fmt.Sprintf("切换模型失败: %v", writeErr))
@@ -422,14 +412,6 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			m.AddMessage("assistant", fmt.Sprintf("已切换到模型 %s，但 API Key 未通过校验：%v。", target, err))
 			return *m, nil
 		}
-	case "/models":
-		models := m.client.ListModels()
-		if len(models) == 0 {
-			m.AddMessage("assistant", fmt.Sprintf("当前提供商 %s 不提供内置模型列表，请使用 /switch <model> 手动设置模型。", provider.CurrentProvider()))
-			return *m, nil
-		}
-		list := strings.Join(models, "\n  - ")
-		m.AddMessage("assistant", fmt.Sprintf("可用模型:\n  - %s", list))
 	case "/pwd", "/workspace":
 		if len(args) > 0 {
 			m.AddMessage("assistant", "用法: /pwd 或 /workspace")
@@ -504,7 +486,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 
 func isAPIKeyRecoveryCommand(cmd string) bool {
 	switch cmd {
-	case "/apikey", "/provider", "/help", "/models", "/switch", "/pwd", "/workspace", "/exit", "/quit", "/q":
+	case "/apikey", "/provider", "/help", "/switch", "/pwd", "/workspace", "/exit", "/quit", "/q":
 		return true
 	default:
 		return false

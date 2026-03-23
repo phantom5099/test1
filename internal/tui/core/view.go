@@ -126,7 +126,6 @@ func RenderHelp(width int) string {
 		{"/apikey <env_name>", "切换 API Key 变量名"},
 		{"/provider <name>", "切换模型提供商"},
 		{"/switch <model>", "切换模型"},
-		{"/models", "查看当前提供商模型列表"},
 		{"/run <code>", "执行代码"},
 		{"/explain <code>", "解释代码"},
 		{"/memory", "显示记忆统计"},

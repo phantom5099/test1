@@ -11,16 +11,6 @@ import (
 
 const DefaultAPIKeyEnvVar = "AI_API_KEY"
 
-type ModelDetail struct {
-	Name string `yaml:"name"`
-	URL  string `yaml:"url"`
-}
-
-type ModelGroup struct {
-	DefaultModel string        `yaml:"default_model"`
-	Models       []ModelDetail `yaml:"models"`
-}
-
 type AppConfiguration struct {
 	App struct {
 		Name    string `yaml:"name"`
@@ -49,10 +39,6 @@ type AppConfiguration struct {
 	Persona struct {
 		FilePath string `yaml:"file_path"`
 	} `yaml:"persona"`
-
-	Models struct {
-		Chat ModelGroup `yaml:"chat"`
-	} `yaml:"models"`
 }
 
 var GlobalAppConfig *AppConfiguration
@@ -62,9 +48,9 @@ func DefaultAppConfig() *AppConfiguration {
 	cfg := &AppConfiguration{}
 	cfg.App.Name = "NeoCode"
 	cfg.App.Version = "1.0.0"
-	cfg.AI.Provider = "modelscope"
+	cfg.AI.Provider = "openll"
 	cfg.AI.APIKey = DefaultAPIKeyEnvVar
-	cfg.AI.Model = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+	cfg.AI.Model = "gpt-5.4"
 	cfg.Memory.TopK = 5
 	cfg.Memory.MinMatchScore = 2.2
 	cfg.Memory.MaxPromptChars = 1800
@@ -73,13 +59,6 @@ func DefaultAppConfig() *AppConfiguration {
 	cfg.Memory.PersistTypes = []string{"user_preference", "project_rule", "code_fact", "fix_recipe"}
 	cfg.History.ShortTermTurns = 6
 	cfg.Persona.FilePath = DefaultPersonaFilePath
-	cfg.Models.Chat.DefaultModel = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
-	cfg.Models.Chat.Models = []ModelDetail{
-		{Name: "Qwen/Qwen3-Coder-480B-A35B-Instruct", URL: "https://api-inference.modelscope.cn/v1/chat/completions"},
-		{Name: "ZhipuAI/GLM-5", URL: "https://api-inference.modelscope.cn/v1/chat/completions"},
-		{Name: "moonshotai/Kimi-K2.5", URL: "https://api-inference.modelscope.cn/v1/chat/completions"},
-		{Name: "deepseek-ai/DeepSeek-R1-0528", URL: "https://api-inference.modelscope.cn/v1/chat/completions"},
-	}
 	return cfg
 }
 
@@ -168,22 +147,6 @@ func (c *AppConfiguration) ValidateBase() error {
 	if strings.TrimSpace(c.AI.Model) == "" {
 		return fmt.Errorf("invalid config: ai.model is required")
 	}
-	if providerName == "modelscope" {
-		if strings.TrimSpace(c.Models.Chat.DefaultModel) == "" {
-			return fmt.Errorf("invalid config: models.chat.default_model is required")
-		}
-		if len(c.Models.Chat.Models) == 0 {
-			return fmt.Errorf("invalid config: models.chat.models must not be empty")
-		}
-		for i, model := range c.Models.Chat.Models {
-			if strings.TrimSpace(model.Name) == "" {
-				return fmt.Errorf("invalid config: models.chat.models[%d].name is required", i)
-			}
-			if strings.TrimSpace(model.URL) == "" {
-				return fmt.Errorf("invalid config: models.chat.models[%d].url is required", i)
-			}
-		}
-	}
 	if c.Memory.TopK <= 0 {
 		return fmt.Errorf("invalid config: memory.top_k must be greater than 0")
 	}
@@ -247,19 +210,6 @@ func RuntimeAPIKey() string {
 		return GlobalAppConfig.RuntimeAPIKey()
 	}
 	return strings.TrimSpace(os.Getenv(DefaultAPIKeyEnvVar))
-}
-
-// GetChatModelURLFromConfig 从指定配置中查找聊天模型对应的 URL。
-func GetChatModelURLFromConfig(cfg *AppConfiguration, modelName string) (string, bool) {
-	if cfg == nil {
-		return "", false
-	}
-	for _, model := range cfg.Models.Chat.Models {
-		if model.Name == modelName {
-			return model.URL, true
-		}
-	}
-	return "", false
 }
 
 func normalizeProviderName(name string) string {

@@ -19,7 +19,6 @@ type ChatClient interface {
 	GetMemoryStats(ctx context.Context) (*MemoryStats, error)
 	ClearMemory(ctx context.Context) error
 	ClearSessionMemory(ctx context.Context) error
-	ListModels() []string
 	DefaultModel() string
 }
 
@@ -116,11 +115,6 @@ func (c *localChatClient) ClearSessionMemory(ctx context.Context) error {
 		return c.workingSvc.Clear(ctx)
 	}
 	return nil
-}
-
-// ListModels 返回 TUI 可用的模型列表。
-func (c *localChatClient) ListModels() []string {
-	return provider.SupportedModelsForConfig(c.config)
 }
 
 // DefaultModel 返回 TUI 使用的默认模型。

@@ -23,9 +23,9 @@
 - API Key 配置方法见下方 `API Key 配置`
 - `ai.api_key` 填写的是环境变量名；留空时会回退到 `AI_API_KEY`
 - 如果 Key 校验失败，可使用 `/apikey <env_name>` 或 `/provider <name>` 调整配置
-- 如果网络异常导致无法确认 Key 是否有效，可使用 `/retry`、`/continue`、`/apikey <env_name>`、`/provider <name>`、`/models`、`/switch <model>` 或 `/exit`
+- 如果网络异常导致无法确认 Key 是否有效，可使用 `/retry`、`/continue`、`/apikey <env_name>`、`/provider <name>`、`/switch <model>` 或 `/exit`
 - 支持的 provider：`modelscope`、`deepseek`、`openll`、`siliconflow`、`豆包大模型`、`openai`
-- 只有 `modelscope` 会通过 `/models` 显示内置模型列表；其他 provider 需要手动设置 `ai.model`
+- 切换 provider 时会自动切到该厂商默认模型，也可以继续使用 `/switch <model>` 自定义
 
 ## API Key 配置
 
@@ -35,9 +35,9 @@
 
 ```yaml
 ai:
-  provider: "modelscope"
+  provider: "openll"
   api_key: "MY_TEAM_API_KEY"
-  model: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+  model: "gpt-5.4"
 ```
 
 这表示程序会读取系统环境变量 `MY_TEAM_API_KEY`。
@@ -95,9 +95,9 @@ app:
   version: "1.0.0"
 
 ai:
-  provider: "modelscope"
+  provider: "openll"
   api_key: "AI_API_KEY"
-  model: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+  model: "gpt-5.4"
 
 memory:
   top_k: 5
@@ -116,27 +116,19 @@ history:
 
 persona:
   file_path: "./persona.txt"
-
-models:
-  chat:
-    default_model: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
-    models:
-      - name: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
-        url: "https://api-inference.modelscope.cn/v1/chat/completions"
 ```
 
 说明：
 
 - `ai.api_key`：API Key 对应的环境变量名；为空时回退到 `AI_API_KEY`
 - `ai.provider`：当前模型提供商，支持 `modelscope`、`deepseek`、`openll`、`siliconflow`、`豆包大模型`、`openai`
-- `ai.model`：当前 provider 使用的模型名；非 `modelscope` 需要手动填写或通过 `/switch <model>` 设置
+- `ai.model`：当前 provider 使用的模型名；执行 `/provider <name>` 时会自动切到该厂商默认模型，也可通过 `/switch <model>` 覆盖
 - `memory.storage_path`：长期结构化记忆文件
 - `memory.persist_types`：允许持久化的结构化记忆类型
 - `memory.min_match_score`：最低召回分数
 - `memory.max_prompt_chars`：记忆注入 prompt 的总字符上限
 - `history.short_term_turns`：保留最近多少轮上下文
 - `persona.file_path`：启动时加载的人设文件
-- `models.chat.models`：`modelscope` 使用的聊天模型与接口地址映射
 
 ## Memory 设计
 
@@ -164,7 +156,6 @@ go run ./cmd/server
 
 ## 可用命令
 
-- `/models`：查看支持的模型
 - `/provider <name>`：切换当前模型提供商
 - `/apikey <env_name>`：切换当前读取的 API Key 环境变量名并立即校验
 - `/switch <model>`：切换当前聊天模型
