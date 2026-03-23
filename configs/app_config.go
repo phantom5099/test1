@@ -288,6 +288,9 @@ func normalizeProviderName(name string) string {
 	if strings.EqualFold(trimmed, "deepseek") {
 		return "deepseek"
 	}
+	if strings.EqualFold(trimmed, "openll") {
+		return "openll"
+	}
 	if strings.EqualFold(trimmed, "siliconflow") {
 		return "siliconflow"
 	}
@@ -302,7 +305,7 @@ func normalizeProviderName(name string) string {
 
 func isSupportedProvider(name string) bool {
 	switch normalizeProviderName(name) {
-	case "modelscope", "deepseek", "siliconflow", "豆包大模型", "openai":
+	case "modelscope", "deepseek", "openll", "siliconflow", "豆包大模型", "openai":
 		return true
 	default:
 		return false
