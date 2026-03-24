@@ -67,7 +67,7 @@ func parseWorkspaceFlag(args []string, stderr io.Writer) (string, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	workspaceFlag := fs.String("workspace", "", "鎸囧畾宸ヤ綔鍖烘牴鐩綍")
+	workspaceFlag := fs.String("workspace", "", "指定工作区根目录")
 	if err := fs.Parse(args); err != nil {
 		return "", err
 	}
@@ -85,37 +85,37 @@ func runWithDeps(workspaceFlag string, deps runDeps) error {
 
 	workspaceRoot, err := deps.prepareWorkspace(workspaceFlag)
 	if err != nil {
-		return fmt.Errorf("瑙ｆ瀽宸ヤ綔鍖哄け璐? %w", err)
+		return fmt.Errorf("解析工作区失败: %w", err)
 	}
 
 	scanner := bufio.NewScanner(deps.stdin)
 	ready, err := deps.ensureAPIKeyInteractive(context.Background(), scanner, defaultConfigPath)
 	if err != nil {
-		return fmt.Errorf("鍒濆鍖栭厤缃け璐? %w", err)
+		return fmt.Errorf("初始化配置失败: %w", err)
 	}
 	if !ready {
-		fmt.Fprintln(deps.stdout, "宸查€€鍑?NeoCode")
+		fmt.Fprintln(deps.stdout, "已退出 NeoCode")
 		return nil
 	}
 
 	if err := deps.loadAppConfig(defaultConfigPath); err != nil {
-		return fmt.Errorf("鍔犺浇閰嶇疆澶辫触: %w", err)
+		return fmt.Errorf("加载配置失败: %w", err)
 	}
 
 	persona, personaPath, err := deps.loadPersonaPrompt(configs.GlobalAppConfig.Persona.FilePath)
 	if err != nil {
-		fmt.Fprintf(deps.stderr, "璀﹀憡: 浜鸿鍔犺浇澶辫触: %v\n", err)
+		fmt.Fprintf(deps.stderr, "警告: 人设加载失败: %v\n", err)
 	} else if personaPath != "" && strings.TrimSpace(configs.GlobalAppConfig.Persona.FilePath) != personaPath {
-		fmt.Fprintf(deps.stderr, "鎻愮ず: 浜鸿宸蹭粠 %s 鍥為€€鍔犺浇\n", personaPath)
+		fmt.Fprintf(deps.stderr, "提示: 人设已从 %s 回退加载\n", personaPath)
 	}
 
 	historyTurns := configs.GlobalAppConfig.History.ShortTermTurns
 	p, err := deps.newProgram(persona, historyTurns, defaultConfigPath, workspaceRoot)
 	if err != nil {
-		return fmt.Errorf("鍒濆鍖栧け璐? %w", err)
+		return fmt.Errorf("初始化失败: %w", err)
 	}
 	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("杩愯澶辫触: %w", err)
+		return fmt.Errorf("运行失败: %w", err)
 	}
 
 	return nil
