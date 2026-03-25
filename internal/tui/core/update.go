@@ -10,17 +10,24 @@ import (
 	"strings"
 
 	"go-llm-demo/configs"
-	"go-llm-demo/internal/server/domain"
-	"go-llm-demo/internal/server/infra/provider"
-	"go-llm-demo/internal/server/infra/tools"
-	"go-llm-demo/internal/tui/infra"
+	"go-llm-demo/internal/tui/services"
+	"go-llm-demo/internal/tui/state"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 const (
-	toolStatusPrefix  = "[TOOL_STATUS]"
-	toolContextPrefix = "[TOOL_CONTEXT]"
+	toolStatusPrefix         = "[TOOL_STATUS]"
+	toolContextPrefix        = "[TOOL_CONTEXT]"
+	maxToolContextOutputSize = 4000
+	maxToolContextMessages   = 3
+)
+
+var (
+	validateChatAPIKey = services.ValidateChatAPIKey
+	writeAppConfig     = configs.WriteAppConfig
+	getWorkspaceRoot   = services.GetWorkspaceRoot
+	executeToolCall    = services.ExecuteToolCall
 )
 
 // Update 处理 Bubble Tea 事件并驱动聊天状态更新。
@@ -42,11 +49,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(msg)
-		m.autoScroll = m.viewport.AtBottom()
+		m.ui.AutoScroll = m.viewport.AtBottom()
 		return m, vpCmd
 
 	case StreamChunkMsg:
-		if m.generating {
+		if m.chat.Generating {
 			m.AppendLastMessage(msg.Content)
 			m.refreshViewport()
 		}
@@ -55,13 +62,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StreamDoneMsg:
 		mu := m.mutex()
 		mu.Lock()
-		m.generating = false
+		m.chat.Generating = false
 		m.streamChan = nil
 
 		var lastContent string
-		shouldCheckToolCall := !m.toolExecuting && len(m.messages) > 0
-		if len(m.messages) > 0 {
-			lastMsg := &m.messages[len(m.messages)-1]
+		shouldCheckToolCall := !m.chat.ToolExecuting && len(m.chat.Messages) > 0
+		if len(m.chat.Messages) > 0 {
+			lastMsg := &m.chat.Messages[len(m.chat.Messages)-1]
 			lastMsg.Streaming = false
 			if lastMsg.Role == "assistant" {
 				lastContent = lastMsg.Content
@@ -71,23 +78,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		mu.Unlock()
 
-		// 检查最后一条AI消息是否为JSON格式的工具调用
+		// 当前工具协议约定：模型如果想调用工具，需要把最后一条 assistant 消息完整输出为
+		// {"tool":"...","params":{...}} 结构。这里在流结束后统一解析，避免半截 JSON 被误触发。
 		if shouldCheckToolCall {
 			var jsonData map[string]interface{}
 			if err := json.Unmarshal([]byte(lastContent), &jsonData); err == nil {
 				if toolName, ok := jsonData["tool"].(string); ok && toolName != "" {
 					mu := m.mutex()
 					mu.Lock()
-					if m.toolExecuting {
+					if m.chat.ToolExecuting {
 						mu.Unlock()
 						return m, nil
 					}
-					m.toolExecuting = true
+					m.chat.ToolExecuting = true
 					mu.Unlock()
 
 					paramsMap := map[string]interface{}{}
 					if toolParams, ok := jsonData["params"].(map[string]interface{}); ok {
-						paramsMap = tools.NormalizeParams(toolParams)
+						paramsMap = services.NormalizeToolParams(toolParams)
 					}
 
 					// 显示工具执行中提示（仅用于 UI，不参与模型上下文）
@@ -95,12 +103,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// 在goroutine中执行工具调用
 					return m, func() tea.Msg {
-						call := domain.ToolCall{Tool: toolName, Params: paramsMap}
-						result := tools.GlobalRegistry.Execute(call)
+						call := services.ToolCall{Tool: toolName, Params: paramsMap}
+						result := executeToolCall(call)
 						if result == nil {
 							mu := m.mutex()
 							mu.Lock()
-							m.toolExecuting = false
+							m.chat.ToolExecuting = false
 							mu.Unlock()
 							return ToolErrorMsg{Err: fmt.Errorf("工具执行失败: 空返回")}
 						}
@@ -116,11 +124,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StreamErrorMsg:
 		mu := m.mutex()
 		mu.Lock()
-		m.generating = false
+		m.chat.Generating = false
 		m.streamChan = nil
 		replacedPlaceholder := false
-		if len(m.messages) > 0 {
-			lastMsg := &m.messages[len(m.messages)-1]
+		if len(m.chat.Messages) > 0 {
+			lastMsg := &m.chat.Messages[len(m.chat.Messages)-1]
 			if lastMsg.Role == "assistant" && strings.TrimSpace(lastMsg.Content) == "" {
 				lastMsg.Content = fmt.Sprintf("错误: %v", msg.Err)
 				lastMsg.Streaming = false
@@ -131,32 +139,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !replacedPlaceholder {
 			m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
 		}
-		m.TrimHistory(m.historyTurns)
+		m.TrimHistory(m.chat.HistoryTurns)
 		m.refreshViewport()
 		return m, nil
 
 	case ShowHelpMsg:
-		m.mode = ModeHelp
+		m.ui.Mode = state.ModeHelp
 		m.refreshViewport()
 		return m, nil
 
 	case HideHelpMsg:
-		m.mode = ModeChat
+		m.ui.Mode = state.ModeChat
 		m.refreshViewport()
 		return m, nil
 
 	case RefreshMemoryMsg:
 		stats, err := m.client.GetMemoryStats(context.Background())
 		if err == nil && stats != nil {
-			m.memoryStats = *stats
-		}
-		m.refreshViewport()
-		return m, nil
-
-	case RefreshTodoMsg:
-		todos, err := m.client.GetTodoList(context.Background())
-		if err == nil {
-			m.todos = todos
+			m.chat.MemoryStats = *stats
 		}
 		m.refreshViewport()
 		return m, nil
@@ -167,46 +167,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToolResultMsg:
 		mu := m.mutex()
 		mu.Lock()
-		m.toolExecuting = false
+		m.chat.ToolExecuting = false
 		mu.Unlock()
 		// 将结构化工具上下文添加为系统消息，然后重新获取AI响应
-		m.AddMessage("system", m.formatToolContextMessage(msg.Result))
+		m.AddMessage("system", formatToolContextMessage(msg.Result))
 		m.AddMessage("assistant", "")
-		m.generating = true
+		m.chat.Generating = true
 		m.refreshViewport()
 
 		// 构建包含工具结果的消息并重新请求AI
 		messages := m.buildMessages()
-		return m, tea.Batch(
-			m.streamResponse(messages),
-			func() tea.Msg { return RefreshTodoMsg{} },
-		)
+		return m, m.streamResponse(messages)
 
 	case ToolErrorMsg:
 		mu := m.mutex()
 		mu.Lock()
-		m.toolExecuting = false
+		m.chat.ToolExecuting = false
 		mu.Unlock()
 		// 将工具执行错误添加为结构化系统上下文
-		m.AddMessage("system", m.formatToolErrorContext(msg.Err))
+		m.AddMessage("system", formatToolErrorContext(msg.Err))
 		m.AddMessage("assistant", "")
-		m.generating = true
+		m.chat.Generating = true
 		m.refreshViewport()
 
 		// 构建包含错误信息的消息并重新请求AI
 		messages := m.buildMessages()
-		return m, tea.Batch(
-			m.streamResponse(messages),
-			func() tea.Msg { return RefreshTodoMsg{} },
-		)
+		return m, m.streamResponse(messages)
 	}
 
 	return m, cmd
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEsc && m.mode == ModeHelp {
-		m.mode = ModeChat
+	if msg.Type == tea.KeyEsc && m.ui.Mode == state.ModeHelp {
+		m.ui.Mode = state.ModeChat
 		m.refreshViewport()
 		return *m, nil
 	}
@@ -219,46 +213,46 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSubmit()
 
 	case tea.KeyPgUp:
-		m.autoScroll = false
+		m.ui.AutoScroll = false
 		m.viewport.HalfViewUp()
 		return *m, nil
 
 	case tea.KeyPgDown:
 		m.viewport.HalfViewDown()
-		m.autoScroll = m.viewport.AtBottom()
+		m.ui.AutoScroll = m.viewport.AtBottom()
 		return *m, nil
 
 	case tea.KeyUp:
-		if strings.TrimSpace(m.textarea.Value()) == "" && len(m.commandHistory) > 0 {
-			if m.cmdHistIndex < len(m.commandHistory)-1 {
-				m.cmdHistIndex++
+		if strings.TrimSpace(m.textarea.Value()) == "" && len(m.chat.CommandHistory) > 0 {
+			if m.chat.CmdHistIndex < len(m.chat.CommandHistory)-1 {
+				m.chat.CmdHistIndex++
 			}
-			if m.cmdHistIndex >= 0 && m.cmdHistIndex < len(m.commandHistory) {
-				m.textarea.SetValue(m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex])
+			if m.chat.CmdHistIndex >= 0 && m.chat.CmdHistIndex < len(m.chat.CommandHistory) {
+				m.textarea.SetValue(m.chat.CommandHistory[len(m.chat.CommandHistory)-1-m.chat.CmdHistIndex])
 				m.textarea.CursorEnd()
 				return *m, nil
 			}
 		}
 	case tea.KeyDown:
-		if m.cmdHistIndex > 0 {
-			m.cmdHistIndex--
-			m.textarea.SetValue(m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex])
+		if m.chat.CmdHistIndex > 0 {
+			m.chat.CmdHistIndex--
+			m.textarea.SetValue(m.chat.CommandHistory[len(m.chat.CommandHistory)-1-m.chat.CmdHistIndex])
 			m.textarea.CursorEnd()
 			return *m, nil
 		}
-		if m.cmdHistIndex == 0 {
-			m.cmdHistIndex = -1
+		if m.chat.CmdHistIndex == 0 {
+			m.chat.CmdHistIndex = -1
 			m.textarea.Reset()
 			return *m, nil
 		}
 	}
 
-	m.cmdHistIndex = -1
+	m.chat.CmdHistIndex = -1
 	var inputCmd tea.Cmd
 	m.textarea, inputCmd = m.textarea.Update(msg)
 	m.refreshViewport()
 	if m.viewport.AtBottom() {
-		m.autoScroll = true
+		m.ui.AutoScroll = true
 	}
 	return *m, inputCmd
 }
@@ -273,16 +267,16 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	switch m.mode {
-	case ModeHelp:
-		m.mode = ModeChat
+	switch m.ui.Mode {
+	case state.ModeHelp:
+		m.ui.Mode = state.ModeChat
 		return *m, nil
 	}
 
 	if strings.HasPrefix(input, "/") {
 		return m.handleCommand(input)
 	}
-	if !m.apiKeyReady {
+	if !m.chat.APIKeyReady {
 		m.AddMessage("assistant", "当前 API Key 未通过校验，请使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。")
 		return *m, nil
 	}
@@ -290,13 +284,13 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.AddMessage("user", input)
 	m.AddMessage("assistant", "")
 	// 在请求发出前先裁剪原始消息，避免 UI 历史无限扩张并影响短期上下文质量。
-	m.TrimHistory(m.historyTurns)
-	m.generating = true
-	m.autoScroll = true
+	m.TrimHistory(m.chat.HistoryTurns)
+	m.chat.Generating = true
+	m.ui.AutoScroll = true
 	m.refreshViewport()
 
-	m.commandHistory = append(m.commandHistory, input)
-	m.cmdHistIndex = -1
+	m.chat.CommandHistory = append(m.chat.CommandHistory, input)
+	m.chat.CmdHistIndex = -1
 
 	messages := m.buildMessages()
 	return *m, m.streamResponse(messages)
@@ -310,14 +304,14 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 
 	cmd := fields[0]
 	args := fields[1:]
-	if !m.apiKeyReady && !isAPIKeyRecoveryCommand(cmd) {
+	if !m.chat.APIKeyReady && !isAPIKeyRecoveryCommand(cmd) {
 		m.AddMessage("assistant", "当前 API Key 未通过校验，仅支持 /apikey <env_name>、/provider <name>、/help、/switch <model>、/pwd（/workspace）或 /exit。")
 		return *m, nil
 	}
 
 	switch cmd {
 	case "/help":
-		m.mode = ModeHelp
+		m.ui.Mode = state.ModeHelp
 	case "/exit", "/quit", "/q":
 		return *m, tea.Quit
 	case "/apikey":
@@ -334,24 +328,24 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		cfg.AI.APIKey = strings.TrimSpace(args[0])
 		envName := cfg.APIKeyEnvVarName()
 		if cfg.RuntimeAPIKey() == "" {
-			m.apiKeyReady = false
+			m.chat.APIKeyReady = false
 			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 未设置。请继续使用 /apikey <env_name> 切换，或 /exit 退出。", envName))
 			return *m, nil
 		}
-		err := provider.ValidateChatAPIKey(context.Background(), cfg)
+		err := validateChatAPIKey(context.Background(), cfg)
 		if err == nil {
-			if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+			if writeErr := writeAppConfig(m.chat.ConfigPath, cfg); writeErr != nil {
 				cfg.AI.APIKey = previousEnvName
-				m.apiKeyReady = configs.RuntimeAPIKey() != ""
+				m.chat.APIKeyReady = configs.RuntimeAPIKey() != ""
 				m.AddMessage("assistant", fmt.Sprintf("切换 API Key 环境变量名失败: %v", writeErr))
 				return *m, nil
 			}
-			m.apiKeyReady = true
+			m.chat.APIKeyReady = true
 			m.AddMessage("assistant", fmt.Sprintf("已切换 API Key 环境变量名为 %s，并通过校验。", envName))
 			return *m, nil
 		}
-		m.apiKeyReady = false
-		if errors.Is(err, provider.ErrInvalidAPIKey) {
+		m.chat.APIKeyReady = false
+		if errors.Is(err, services.ErrInvalidAPIKey) {
 			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 中的 API Key 无效：%v。请继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。", envName, err))
 			return *m, nil
 		}
@@ -359,7 +353,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	case "/provider":
 		if len(args) == 0 {
-			m.AddMessage("assistant", fmt.Sprintf("用法: /provider <name>\n可用提供商:\n  - %s", strings.Join(provider.SupportedProviders(), "\n  - ")))
+			m.AddMessage("assistant", fmt.Sprintf("用法: /provider <name>\n可用提供商:\n  - %s", strings.Join(services.SupportedProviders(), "\n  - ")))
 			return *m, nil
 		}
 		cfg := configs.GlobalAppConfig
@@ -367,29 +361,29 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			m.AddMessage("assistant", "当前配置未加载，无法切换提供商")
 			return *m, nil
 		}
-		providerName, ok := provider.NormalizeProviderName(strings.Join(args, " "))
+		providerName, ok := services.NormalizeProviderName(strings.Join(args, " "))
 		if !ok {
-			m.AddMessage("assistant", fmt.Sprintf("不支持的提供商: %s\n可用提供商:\n  - %s", strings.Join(args, " "), strings.Join(provider.SupportedProviders(), "\n  - ")))
+			m.AddMessage("assistant", fmt.Sprintf("不支持的提供商: %s\n可用提供商:\n  - %s", strings.Join(args, " "), strings.Join(services.SupportedProviders(), "\n  - ")))
 			return *m, nil
 		}
 		cfg.AI.Provider = providerName
-		cfg.AI.Model = provider.DefaultModelForProvider(providerName)
-		m.activeModel = cfg.AI.Model
-		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+		cfg.AI.Model = services.DefaultModelForProvider(providerName)
+		m.chat.ActiveModel = cfg.AI.Model
+		if writeErr := writeAppConfig(m.chat.ConfigPath, cfg); writeErr != nil {
 			m.AddMessage("assistant", fmt.Sprintf("切换提供商失败: %v", writeErr))
 			return *m, nil
 		}
 		if cfg.RuntimeAPIKey() == "" {
-			m.apiKeyReady = false
+			m.chat.APIKeyReady = false
 			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，但当前环境变量 %s 未设置。请使用 /apikey <env_name> 或设置该环境变量。", providerName, cfg.APIKeyEnvVarName()))
 			return *m, nil
 		}
-		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
-			m.apiKeyReady = true
+		if err := validateChatAPIKey(context.Background(), cfg); err == nil {
+			m.chat.APIKeyReady = true
 			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，当前模型已重置为默认值: %s。", providerName, cfg.AI.Model))
 			return *m, nil
 		} else {
-			m.apiKeyReady = false
+			m.chat.APIKeyReady = false
 			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，但 API Key 未通过校验：%v。可继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置。", providerName, err))
 			return *m, nil
 		}
@@ -405,22 +399,22 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		target := strings.Join(args, " ")
 		cfg.AI.Model = target
-		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
+		if writeErr := writeAppConfig(m.chat.ConfigPath, cfg); writeErr != nil {
 			m.AddMessage("assistant", fmt.Sprintf("切换模型失败: %v", writeErr))
 			return *m, nil
 		}
-		m.activeModel = target
+		m.chat.ActiveModel = target
 		if cfg.RuntimeAPIKey() == "" {
-			m.apiKeyReady = false
+			m.chat.APIKeyReady = false
 			m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s，但当前环境变量 %s 未设置。", target, cfg.APIKeyEnvVarName()))
 			return *m, nil
 		}
-		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
-			m.apiKeyReady = true
+		if err := validateChatAPIKey(context.Background(), cfg); err == nil {
+			m.chat.APIKeyReady = true
 			m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s", target))
 			return *m, nil
 		} else {
-			m.apiKeyReady = false
+			m.chat.APIKeyReady = false
 			m.AddMessage("assistant", fmt.Sprintf("已切换到模型 %s，但 API Key 未通过校验：%v。", target, err))
 			return *m, nil
 		}
@@ -429,9 +423,9 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			m.AddMessage("assistant", "用法: /pwd 或 /workspace")
 			return *m, nil
 		}
-		root := strings.TrimSpace(m.workspaceRoot)
+		root := strings.TrimSpace(m.chat.WorkspaceRoot)
 		if root == "" {
-			root = tools.GetWorkspaceRoot()
+			root = getWorkspaceRoot()
 		}
 		if strings.TrimSpace(root) == "" {
 			m.AddMessage("assistant", "当前工作区: 未知")
@@ -444,7 +438,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			m.AddMessage("assistant", fmt.Sprintf("读取记忆统计失败: %v", err))
 			return *m, nil
 		}
-		m.memoryStats = *stats
+		m.chat.MemoryStats = *stats
 		m.AddMessage("assistant", fmt.Sprintf(
 			"记忆统计:\n  长期: %d\n  会话: %d\n  总计: %d\n  TopK: %d\n  最小分数: %.2f\n  文件: %s\n  类型: %s",
 			stats.PersistentItems, stats.SessionItems, stats.TotalItems, stats.TopK, stats.MinScore, stats.Path, formatTypeStats(stats.ByType),
@@ -460,7 +454,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		stats, _ := m.client.GetMemoryStats(context.Background())
 		if stats != nil {
-			m.memoryStats = *stats
+			m.chat.MemoryStats = *stats
 		}
 		m.AddMessage("assistant", "已清空本地长期记忆")
 	case "/clear-context":
@@ -468,10 +462,10 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			m.AddMessage("assistant", fmt.Sprintf("清空会话记忆失败: %v", err))
 			return *m, nil
 		}
-		m.messages = nil
+		m.chat.Messages = nil
 		stats, _ := m.client.GetMemoryStats(context.Background())
 		if stats != nil {
-			m.memoryStats = *stats
+			m.chat.MemoryStats = *stats
 		}
 		m.AddMessage("assistant", "已清空当前会话上下文")
 	case "/run":
@@ -519,11 +513,11 @@ func formatTypeStats(byType map[string]int) string {
 		return "无"
 	}
 	ordered := []string{
-		domain.TypeUserPreference,
-		domain.TypeProjectRule,
-		domain.TypeCodeFact,
-		domain.TypeFixRecipe,
-		domain.TypeSessionMemory,
+		services.TypeUserPreference,
+		services.TypeProjectRule,
+		services.TypeCodeFact,
+		services.TypeFixRecipe,
+		services.TypeSessionMemory,
 	}
 	parts := make([]string, 0, len(byType))
 	for _, key := range ordered {
@@ -537,37 +531,31 @@ func formatTypeStats(byType map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-func (m *Model) buildMessages() []infra.Message {
+func (m *Model) buildMessages() []services.Message {
 	mu := m.mutex()
 	mu.Lock()
 	defer mu.Unlock()
-	result := make([]infra.Message, 0, len(m.messages))
-	keepToolContextIndex := recentToolContextIndexes(m.messages, m.maxToolContextMessages)
+	result := make([]services.Message, 0, len(m.chat.Messages))
+	// 工具结果会被注入成 system 上下文，但只保留最近几条，
+	// 否则连续工具链很容易把真正的对话历史挤出上下文窗口。
+	keepToolContextIndex := recentToolContextIndexes(m.chat.Messages, maxToolContextMessages)
 
 	// 按照消息的原始时间顺序进行迭代
-	for idx, msg := range m.messages {
+	for idx, msg := range m.chat.Messages {
 		if msg.Role == "system" && isTransientToolStatusMessage(msg.Content) {
 			continue
 		}
 		if msg.Role == "system" && isToolContextMessage(msg.Content) {
-			content := msg.Content
 			if _, ok := keepToolContextIndex[idx]; !ok {
-				// 对于较旧的工具执行结果，只保留状态头信息，隐藏其具体输出以节省 Token。
-				// 这样 Agent 仍然知道它已经执行过该工具及其结果。
-				content = stripToolOutput(content)
+				continue
 			}
-			result = append(result, infra.Message{
-				Role:    msg.Role,
-				Content: content,
-			})
-			continue
 		}
 		// 跳过空的 assistant 消息
 		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
 			continue
 		}
 		// 将非空消息按其原始角色和内容添加到结果中
-		result = append(result, infra.Message{
+		result = append(result, services.Message{
 			Role:    msg.Role,
 			Content: msg.Content,
 		})
@@ -576,25 +564,8 @@ func (m *Model) buildMessages() []infra.Message {
 	return result
 }
 
-// stripToolOutput 移除工具上下文消息中的详细输出，仅保留工具名和执行状态。
-func stripToolOutput(content string) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-	for _, line := range lines {
-		// 保留标识头、工具名、成功状态和元数据，丢弃具体的输出/错误正文。
-		if strings.HasPrefix(line, toolContextPrefix) ||
-			strings.HasPrefix(line, "tool=") ||
-			strings.HasPrefix(line, "success=") ||
-			strings.HasPrefix(line, "metadata=") {
-			result = append(result, line)
-		}
-	}
-	result = append(result, "output: (该历史输出已由系统自动压缩以节省 Token 窗口)")
-	return strings.Join(result, "\n")
-}
-
-func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
-	stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
+func (m *Model) streamResponse(messages []services.Message) tea.Cmd {
+	stream, err := m.client.Chat(context.Background(), messages, m.chat.ActiveModel)
 	if err != nil {
 		return func() tea.Msg { return StreamErrorMsg{Err: err} }
 	}
@@ -626,9 +597,9 @@ func (m *Model) sendCodeToAI(code string) tea.Cmd {
 	prompt := fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code)
 	m.AddMessage("user", prompt)
 	m.AddMessage("assistant", "")
-	m.TrimHistory(m.historyTurns)
-	m.generating = true
-	m.autoScroll = true
+	m.TrimHistory(m.chat.HistoryTurns)
+	m.chat.Generating = true
+	m.ui.AutoScroll = true
 	m.refreshViewport()
 
 	messages := m.buildMessages()
@@ -643,7 +614,7 @@ func isToolContextMessage(content string) bool {
 	return strings.HasPrefix(strings.TrimSpace(content), toolContextPrefix)
 }
 
-func recentToolContextIndexes(messages []Message, keep int) map[int]struct{} {
+func recentToolContextIndexes(messages []state.Message, keep int) map[int]struct{} {
 	result := map[int]struct{}{}
 	if keep <= 0 || len(messages) == 0 {
 		return result
@@ -669,11 +640,13 @@ func formatToolStatusMessage(toolName string, params map[string]interface{}) str
 	return fmt.Sprintf("%s tool=%s%s", toolStatusPrefix, strings.TrimSpace(toolName), detail)
 }
 
-func (m *Model) formatToolContextMessage(result *tools.ToolResult) string {
+func formatToolContextMessage(result *services.ToolResult) string {
 	if result == nil {
 		return toolContextPrefix + "\n" + "tool=unknown\n" + "success=false\n" + "error:\n工具返回为空"
 	}
 
+	// 这里故意使用稳定的纯文本 key/value 结构，而不是直接把 ToolResult 原样塞回模型：
+	// 一方面更容易截断超长输出，另一方面也能减少不同工具返回格式带来的歧义。
 	builder := strings.Builder{}
 	builder.WriteString(toolContextPrefix)
 	builder.WriteString("\n")
@@ -692,7 +665,7 @@ func (m *Model) formatToolContextMessage(result *tools.ToolResult) string {
 		output := strings.TrimSpace(result.Output)
 		if output != "" {
 			builder.WriteString("output:\n")
-			builder.WriteString(truncateForContext(output, m.maxToolContextOutputSize))
+			builder.WriteString(truncateForContext(output, maxToolContextOutputSize))
 		}
 	} else {
 		errText := strings.TrimSpace(result.Error)
@@ -701,19 +674,19 @@ func (m *Model) formatToolContextMessage(result *tools.ToolResult) string {
 		}
 		if errText != "" {
 			builder.WriteString("error:\n")
-			builder.WriteString(truncateForContext(errText, m.maxToolContextOutputSize))
+			builder.WriteString(truncateForContext(errText, maxToolContextOutputSize))
 		}
 	}
 
 	return builder.String()
 }
 
-func (m *Model) formatToolErrorContext(err error) string {
+func formatToolErrorContext(err error) string {
 	errText := "未知错误"
 	if err != nil {
 		errText = err.Error()
 	}
-	return toolContextPrefix + "\n" + "tool=unknown\n" + "success=false\n" + "error:\n" + truncateForContext(errText, m.maxToolContextOutputSize)
+	return toolContextPrefix + "\n" + "tool=unknown\n" + "success=false\n" + "error:\n" + truncateForContext(errText, maxToolContextOutputSize)
 }
 
 func truncateForContext(text string, maxLen int) string {
@@ -721,24 +694,12 @@ func truncateForContext(text string, maxLen int) string {
 	if maxLen <= 0 || len(trimmed) <= maxLen {
 		return trimmed
 	}
-
-	// 采用“头尾保留”策略，中间用省略号代替。
-	// 这在读取代码或查看长日志时非常有用（可以看到开头和结尾的报错）。
-	totalLen := len(trimmed)
-	suffix := fmt.Sprintf("\n... (已截断 %d 字符，总计 %d)\n", totalLen-maxLen, totalLen)
-
-	// 保留头部的 60% 和尾部的 40% 空间
-	headLen := int(float64(maxLen-len(suffix)) * 0.6)
-	tailLen := (maxLen - len(suffix)) - headLen
-
-	if headLen < 0 {
-		headLen = 0
+	suffix := fmt.Sprintf("\n... (truncated, total=%d chars)", len(trimmed))
+	keep := maxLen - len(suffix)
+	if keep < 0 {
+		keep = 0
 	}
-	if tailLen < 0 {
-		tailLen = 0
-	}
-
-	return trimmed[:headLen] + suffix + trimmed[totalLen-tailLen:]
+	return trimmed[:keep] + suffix
 }
 
 func runCodeCmd(code string) tea.Cmd {
@@ -811,10 +772,10 @@ func (m *Model) calculateInputHeight() int {
 }
 
 func (m *Model) syncLayout() {
-	if m.width <= 0 || m.height <= 0 {
+	if m.ui.Width <= 0 || m.ui.Height <= 0 {
 		return
 	}
-	inputWidth := m.width
+	inputWidth := m.ui.Width
 	if inputWidth < 20 {
 		inputWidth = 20
 	}
@@ -825,14 +786,14 @@ func (m *Model) syncLayout() {
 	statusHeight := 1
 	inputHeight := m.textarea.Height() + 2
 	helpHeight := 0
-	if m.mode == ModeHelp {
-		helpHeight = minInt(20, m.height-statusHeight-3)
+	if m.ui.Mode == state.ModeHelp {
+		helpHeight = minInt(20, m.ui.Height-statusHeight-3)
 	}
-	contentHeight := m.height - statusHeight - inputHeight - helpHeight
+	contentHeight := m.ui.Height - statusHeight - inputHeight - helpHeight
 	if contentHeight < 3 {
 		contentHeight = 3
 	}
-	m.viewport.Width = m.width
+	m.viewport.Width = m.ui.Width
 	m.viewport.Height = contentHeight
 }
 
@@ -840,8 +801,8 @@ func (m *Model) refreshViewport() {
 	m.syncLayout()
 	content := m.renderChatContent()
 	m.viewport.SetContent(content)
-	if m.autoScroll || m.viewport.AtBottom() {
+	if m.ui.AutoScroll || m.viewport.AtBottom() {
 		m.viewport.GotoBottom()
-		m.autoScroll = true
+		m.ui.AutoScroll = true
 	}
 }
