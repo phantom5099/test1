@@ -10,27 +10,21 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// SecurityService 根据工具类型和目标对象给出允许、拒绝或询问的决策。
-type SecurityService interface {
-	Check(toolType string, target string) domain.Action
-}
-
-// securityServiceImpl 是 SecurityService 的具体实现
-type securityServiceImpl struct {
+// SecurityService provides security checks backed by configured rule sets.
+type SecurityService struct {
 	configRepo domain.SecurityConfigRepository
 	blackList  *domain.Config
 	whiteList  *domain.Config
 	yellowList *domain.Config
 }
 
-// NewSecurityService 创建基于规则配置仓库的安全检查服务。
-func NewSecurityService(configRepo domain.SecurityConfigRepository) SecurityService {
-	return &securityServiceImpl{
+func NewSecurityService(configRepo domain.SecurityConfigRepository) *SecurityService {
+	return &SecurityService{
 		configRepo: configRepo,
 	}
 }
 
-func (s *securityServiceImpl) Initialize(configDir string) error {
+func (s *SecurityService) Initialize(configDir string) error {
 	blackList, whiteList, yellowList, err := s.configRepo.LoadAll(configDir)
 	if err != nil {
 		return err
@@ -41,7 +35,7 @@ func (s *securityServiceImpl) Initialize(configDir string) error {
 	return nil
 }
 
-func (s *securityServiceImpl) Check(toolType string, target string) domain.Action {
+func (s *SecurityService) Check(toolType string, target string) domain.Action {
 	normalizedTarget := target
 
 	// 安全增强：对路径类操作进行规范化处理
@@ -76,7 +70,7 @@ func (s *securityServiceImpl) Check(toolType string, target string) domain.Actio
 	return domain.ActionAsk
 }
 
-func (s *securityServiceImpl) matchesList(config *domain.Config, toolType, target string) bool {
+func (s *SecurityService) matchesList(config *domain.Config, toolType, target string) bool {
 	if config == nil {
 		return false
 	}
@@ -115,7 +109,6 @@ func ruleMatches(rule domain.Rule, toolType string, target string) bool {
 		return false
 	}
 
-	// Bash 规则匹配命令字符串；其余规则统一走 doublestar 路径/域名匹配。
 	if toolType == "Bash" {
 		return matchCommand(pattern, target)
 	}
@@ -129,7 +122,6 @@ func ruleMatches(rule domain.Rule, toolType string, target string) bool {
 }
 
 func matchCommand(pattern, command string) bool {
-	// 命令规则沿用类似 glob 的写法，再转换为正则以便复用配置表达力。
 	rePattern := regexp.QuoteMeta(pattern)
 	rePattern = strings.ReplaceAll(rePattern, `\*\*`, `.*`)
 	rePattern = strings.ReplaceAll(rePattern, `\*`, `.*`)
